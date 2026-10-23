@@ -6,6 +6,8 @@ const netPolicy = require('./net-policy')
 // 看過的影片不存磁碟，不然越看占用越多
 netPolicy.disableDiskCache()
 
+let mainWin = null
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1360,
@@ -22,6 +24,7 @@ function createWindow() {
       nodeIntegration: false,
     },
   })
+  mainWin = win
   win.removeMenu()
   win.loadFile(path.join(__dirname, 'src', 'index.html'))
 
@@ -43,7 +46,20 @@ function createWindow() {
   })
 }
 
+// 同時只開一份：再開一次就把原本的視窗叫到前面（兩份同時跑會互相清掉對方的更新暫存）
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWin || mainWin.isDestroyed()) return
+    if (mainWin.isMinimized()) mainWin.restore()
+    mainWin.show()
+    mainWin.focus()
+  })
+}
+
 app.whenReady().then(() => {
+  if (!app.hasSingleInstanceLock()) return
   netPolicy.allowCors()
   netPolicy.removeOldCache()
   updater.setup()
