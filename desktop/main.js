@@ -1,19 +1,10 @@
-const { app, BrowserWindow, session, shell } = require('electron')
+const { app, BrowserWindow, shell } = require('electron')
 const path = require('path')
 const updater = require('./updater')
+const netPolicy = require('./net-policy')
 
-// 影片 CDN 只對特定來源回 CORS，本機 file:// 頁面的 Origin 是 null，統一補上允許標頭
-function allowCors() {
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    const headers = { ...details.responseHeaders }
-    for (const k of Object.keys(headers)) {
-      if (k.toLowerCase().startsWith('access-control-allow-')) delete headers[k]
-    }
-    headers['Access-Control-Allow-Origin'] = ['*']
-    headers['Access-Control-Allow-Headers'] = ['*']
-    callback({ responseHeaders: headers })
-  })
-}
+// 看過的影片不存磁碟，不然越看占用越多
+netPolicy.disableDiskCache()
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -53,7 +44,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  allowCors()
+  netPolicy.allowCors()
+  netPolicy.removeOldCache()
   updater.setup()
   createWindow()
   app.on('activate', () => {

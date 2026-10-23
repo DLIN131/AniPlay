@@ -54,6 +54,9 @@ function unzip(zip, dest) {
 }
 
 function setup() {
+  // 上次更新留下的下載檔和解壓縮檔（約 400 MB）。程式能啟動就代表更新已經裝完，直接清掉
+  fs.rm(work, { recursive: true, force: true }, () => {})
+
   ipcMain.handle('update:supported', () => app.isPackaged && process.platform === 'win32')
 
   ipcMain.handle('update:download', async (e, url) => {

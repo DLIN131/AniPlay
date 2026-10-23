@@ -331,7 +331,17 @@ const store = {
   },
   words() { return this.get('search_words', []) },
   addWord(w) { this.set('search_words', [w, ...this.words().filter((x) => x !== w)].slice(0, 20)) },
+  /** 觀看紀錄最多 300 部，被擠出紀錄的作品，播放進度也一起刪掉，不要越積越多 */
+  prunePositions() {
+    const ids = new Set(this.history().map((h) => String(h.anime.id)))
+    try {
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith('pos_') && !ids.has(k.split('_')[1]))
+        .forEach((k) => localStorage.removeItem(k))
+    } catch {}
+  },
 }
+store.prunePositions()
 
 // ================= 畫面工具 =================
 
@@ -797,7 +807,8 @@ async function pagePlay(id, source, ep) {
   if (!/\.m3u8(\?|$)/i.test(e.url)) {
     video.src = e.url
   } else if (window.Hls && Hls.isSupported()) {
-    hls = new Hls({ maxBufferLength: 60 })
+    // 往前最多預載 60 秒；已經播過的只留 90 秒在記憶體（hls.js 預設是全部留著，長片會越看越吃記憶體）
+    hls = new Hls({ maxBufferLength: 60, backBufferLength: 90 })
     hls.loadSource(e.url)
     hls.attachMedia(video)
     hls.on(Hls.Events.ERROR, (_, data) => {
