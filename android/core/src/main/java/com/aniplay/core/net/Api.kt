@@ -133,7 +133,8 @@ object Api {
             put("offset", offset.toString())
             put("limit", limit.toString())
             put("orderby", q.orderby)
-            if (q.name.isNotEmpty()) put("vod_name", q.name)
+            // 網站資料是簡體，打繁體也要找得到
+            if (q.name.isNotEmpty()) put("vod_name", ChineseConvert.toSimplified(q.name))
             if (q.cls.isNotEmpty()) put("vod_class", q.cls)
             if (q.year.isNotEmpty()) put("vod_year", q.year)
             if (q.lang.isNotEmpty()) put("vod_lang", q.lang)

@@ -43,10 +43,22 @@ const anime = (o) => ({
   score: str(o.vod_score),
 })
 
+// 繁體 → 簡體（逐字，對照表在 t2s.js）。網站資料都是簡體，搜尋時先轉換，打繁體也找得到
+let t2sMap = null
+function toSimplified(s) {
+  if (!s) return s
+  if (!t2sMap) {
+    t2sMap = new Map()
+    const a = [...(window.T2S_PAIRS || '')]
+    for (let i = 0; i + 1 < a.length; i += 2) t2sMap.set(a[i], a[i + 1])
+  }
+  return [...s].map((c) => t2sMap.get(c) || c).join('')
+}
+
 async function list(q, offset, limit = PAGE) {
   const info = await api('Vod/get_list', {
     type_id: q.typeId, offset, limit, orderby: q.orderby || 'pubdate',
-    vod_name: q.name, vod_class: q.cls, vod_year: q.year, vod_version: q.version,
+    vod_name: toSimplified(q.name), vod_class: q.cls, vod_year: q.year, vod_version: q.version,
   })
   return { items: (info.rows || []).map(anime), total: info.total || 0 }
 }
@@ -665,13 +677,14 @@ async function pagePlay(id, source, ep) {
 
   const el = h(`<div class="player-page">
     <div class="player-main">
-      <div class="video-wrap"><video controls autoplay></video><canvas class="danmaku"></canvas><div class="toast" style="opacity:0"></div></div>
+      <div class="video-wrap"><video controls autoplay controlslist="nofullscreen" disablepictureinpicture></video><canvas class="danmaku"></canvas><div class="toast" style="opacity:0"></div></div>
       <div class="player-title">
         <button class="back">‹ 返回</button>
         <h1>${esc(a.name)}${src.episodes.length > 1 ? `　第 ${esc(e.name)} 集` : ''}</h1>
         <button class="prev">⏮ 上一集</button>
         <button class="next">下一集 ⏭</button>
         <select class="speed"></select>
+        <button class="fs">⛶ 全螢幕</button>
       </div>
       <div class="dm-bar">
         <button class="dm-toggle"></button>
@@ -818,7 +831,7 @@ async function pagePlay(id, source, ep) {
       case 'ArrowRight': video.currentTime = Math.min(video.duration || 0, video.currentTime + 10); showToast('快進 10 秒'); break
       case 'ArrowUp': video.volume = Math.min(1, video.volume + 0.1); showToast(`音量 ${Math.round(video.volume * 100)}%`); break
       case 'ArrowDown': video.volume = Math.max(0, video.volume - 0.1); showToast(`音量 ${Math.round(video.volume * 100)}%`); break
-      case 'f': case 'F': document.fullscreenElement ? document.exitFullscreen() : el.querySelector('.video-wrap').requestFullscreen(); break
+      case 'f': case 'F': toggleFs(); break
       case 'n': case 'N': goEp(ep + 1); break
       case 'p': case 'P': goEp(ep - 1); break
       case 'd': case 'D': toggleDm(); break
@@ -829,16 +842,31 @@ async function pagePlay(id, source, ep) {
     ev.preventDefault()
   }
   document.addEventListener('keydown', onKey)
-  // 雙擊影片切換全螢幕
+  // 全螢幕一定要放大「影片＋彈幕」外框；只放大 <video> 的話彈幕層會被蓋住看不到。
+  // 所以關掉原生控制列的全螢幕按鈕，改用自己的按鈕、F 鍵、雙擊影片
+  const wrap = el.querySelector('.video-wrap')
+  const toggleFs = () => {
+    if (document.fullscreenElement) document.exitFullscreen()
+    else wrap.requestFullscreen().catch(() => {})
+  }
+  el.querySelector('.fs').onclick = toggleFs
   video.addEventListener('dblclick', (ev) => {
     ev.preventDefault()
-    document.fullscreenElement ? document.exitFullscreen() : el.querySelector('.video-wrap').requestFullscreen()
+    toggleFs()
   })
+  // 保險：萬一還是只有 <video> 進入全螢幕，換成整個外框
+  const onFsChange = () => {
+    if (document.fullscreenElement === video) {
+      document.exitFullscreen().then(() => wrap.requestFullscreen()).catch(() => {})
+    }
+  }
+  document.addEventListener('fullscreenchange', onFsChange)
 
   route.cleanup = () => {
     save()
     clearInterval(timer)
     document.removeEventListener('keydown', onKey)
+    document.removeEventListener('fullscreenchange', onFsChange)
     if (document.fullscreenElement) document.exitFullscreen()
     dm.destroy()
     if (hls) hls.destroy()
