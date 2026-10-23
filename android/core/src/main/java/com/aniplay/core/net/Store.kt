@@ -9,12 +9,14 @@ import org.json.JSONObject
 /** 觀看紀錄裡的一筆：看到哪條線路的哪一集 */
 data class HistoryItem(val anime: Anime, val source: Int, val episode: Int, val episodeName: String)
 
-/** 本機的收藏、觀看紀錄、播放進度（不登入網站帳號，全部存在裝置上） */
+/** 本機的收藏、待看清單、觀看紀錄、播放進度（不登入網站帳號，全部存在裝置上） */
 object Store {
     private const val MAX_HISTORY = 300
     private lateinit var sp: SharedPreferences
 
     val favorites = mutableStateListOf<Anime>()
+    /** 待看清單：想看但還沒開始看的作品，新加的在前面 */
+    val watchLater = mutableStateListOf<Anime>()
     val history = mutableStateListOf<HistoryItem>()
     val searchWords = mutableStateListOf<String>()
 
@@ -22,6 +24,7 @@ object Store {
         if (::sp.isInitialized) return
         sp = context.getSharedPreferences("store", Context.MODE_PRIVATE)
         favorites.addAll(loadAnimes(sp.getString("favorites", "[]")!!))
+        watchLater.addAll(loadAnimes(sp.getString("watch_later", "[]")!!))
         history.addAll(loadHistory())
         searchWords.addAll(sp.getString("search_words", "").orEmpty().split('\n').filter { it.isNotBlank() })
     }
@@ -47,6 +50,15 @@ object Store {
     fun toggleFavorite(a: Anime) {
         if (!favorites.removeAll { it.id == a.id }) favorites.add(0, a)
         sp.edit().putString("favorites", saveAnimes(favorites)).apply()
+    }
+
+    // ---------- 待看清單 ----------
+
+    fun isWatchLater(id: Int) = watchLater.any { it.id == id }
+
+    fun toggleWatchLater(a: Anime) {
+        if (!watchLater.removeAll { it.id == a.id }) watchLater.add(0, a)
+        sp.edit().putString("watch_later", saveAnimes(watchLater)).apply()
     }
 
     // ---------- 觀看紀錄 ----------

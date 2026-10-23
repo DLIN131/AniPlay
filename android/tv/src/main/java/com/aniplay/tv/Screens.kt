@@ -65,6 +65,10 @@ fun HomeScreen() {
             ErrorBox(err, onRetry = vm::load)
         }
         else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 20.dp)) {
+            val later = Store.watchLater.take(15)
+            if (later.isNotEmpty()) {
+                item(key = "later") { AnimeRow("待看清單", later, onClick = nav.openAnime) }
+            }
             val cont = Store.history.take(15)
             if (cont.isNotEmpty()) {
                 item(key = "continue") {
@@ -225,19 +229,27 @@ fun SearchScreen() {
     }
 }
 
+enum class LocalList(val title: String, val empty: String) {
+    Favorites("收藏", "還沒有收藏，在作品頁按「收藏」加入"),
+    WatchLater("待看清單", "待看清單是空的，在作品頁按「＋ 待看」加入"),
+    History("觀看紀錄", "還沒有觀看紀錄"),
+}
+
 @Composable
-fun LocalListScreen(favorites: Boolean) {
+fun LocalListScreen(kind: LocalList) {
     val nav = LocalNav.current
     Column(Modifier.fillMaxSize()) {
-        ScreenTitle(if (favorites) "收藏" else "觀看紀錄") {
-            if (!favorites && Store.history.isNotEmpty()) TvButton(onClick = Store::clearHistory) { Text("清除全部紀錄") }
+        ScreenTitle(kind.title) {
+            if (kind == LocalList.History && Store.history.isNotEmpty()) TvButton(onClick = Store::clearHistory) { Text("清除全部紀錄") }
         }
-        val list = if (favorites) Store.favorites.map { it to null } else {
-            Store.history.map { it.anime.copy(remarks = "") to "看到第 ${it.episodeName} 集" }
+        val list: List<Pair<com.aniplay.core.net.Anime, String?>> = when (kind) {
+            LocalList.Favorites -> Store.favorites.map { it to null }
+            LocalList.WatchLater -> Store.watchLater.map { it to null }
+            LocalList.History -> Store.history.map { it.anime.copy(remarks = "") to "看到第 ${it.episodeName} 集" }
         }
         if (list.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(if (favorites) "還沒有收藏" else "還沒有觀看紀錄", color = Gray, fontSize = 18.sp)
+                Text(kind.empty, color = Gray, fontSize = 18.sp)
             }
             return
         }

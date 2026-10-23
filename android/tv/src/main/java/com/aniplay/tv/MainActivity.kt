@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
@@ -72,6 +73,7 @@ enum class Tab(val label: String, val icon: ImageVector) {
     Week("時間表", Icons.Filled.DateRange),
     Search("搜尋", Icons.Filled.Search),
     Favorites("收藏", Icons.Filled.Favorite),
+    WatchLater("待看清單", Icons.Filled.Add),
     History("觀看紀錄", Icons.Filled.Refresh),
 }
 
@@ -203,8 +205,9 @@ fun HomeScaffold(tab: Tab, onTab: (Tab) -> Unit, focusDrawer: Boolean, onFocused
                 Tab.Browse -> BrowseScreen()
                 Tab.Week -> WeekScreen()
                 Tab.Search -> SearchScreen()
-                Tab.Favorites -> LocalListScreen(favorites = true)
-                Tab.History -> LocalListScreen(favorites = false)
+                Tab.Favorites -> LocalListScreen(LocalList.Favorites)
+                Tab.WatchLater -> LocalListScreen(LocalList.WatchLater)
+                Tab.History -> LocalListScreen(LocalList.History)
             }
         }
     }

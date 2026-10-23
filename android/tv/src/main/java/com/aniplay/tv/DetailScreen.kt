@@ -142,6 +142,8 @@ private fun DetailBody(d: AnimeDetail) {
                             onClick = { Store.toggleFavorite(a) },
                             modifier = if (d.sources.isEmpty()) Modifier.focusRequester(playFocus) else Modifier,
                         ) { Text(if (fav) "♥ 已收藏" else "♡ 收藏") }
+                        val later = Store.isWatchLater(a.id)
+                        TvButton(onClick = { Store.toggleWatchLater(a) }) { Text(if (later) "✓ 已在待看" else "＋ 待看") }
                         d.classes.firstOrNull()?.let { c ->
                             TvButton(onClick = { nav.openListing(c, Query(cls = c, orderby = "hits")) }) { Text("更多$c") }
                         }

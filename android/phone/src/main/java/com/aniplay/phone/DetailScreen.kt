@@ -20,6 +20,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
@@ -164,6 +166,17 @@ private fun DetailBody(d: AnimeDetail) {
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(if (fav) "已收藏" else "收藏", color = Color.White)
+            }
+            val later = Store.isWatchLater(a.id)
+            OutlinedButton(onClick = { Store.toggleWatchLater(a) }) {
+                Icon(
+                    if (later) Icons.Filled.Check else Icons.Filled.Add,
+                    contentDescription = null,
+                    tint = Accent,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("待看", color = Color.White)
             }
         }
 

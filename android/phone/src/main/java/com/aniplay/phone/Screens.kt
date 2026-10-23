@@ -174,6 +174,13 @@ fun HomeScreen() {
                             }
                         }
                     }
+                    val laterList = Store.watchLater.take(12)
+                    if (laterList.isNotEmpty()) {
+                        item(key = "later") {
+                            SectionTitle("待看清單")
+                            AnimeRow(laterList, onClick = nav.openAnime)
+                        }
+                    }
                     val continueList = Store.history.take(12)
                     if (continueList.isNotEmpty()) {
                         item(key = "continue") {
@@ -371,7 +378,7 @@ fun MineScreen() {
 
     Column(Modifier.fillMaxSize()) {
         TopTitle("我的") {
-            if (page == 1 && Store.history.isNotEmpty()) {
+            if (page == 2 && Store.history.isNotEmpty()) {
                 TextButton(onClick = { confirmClear = true }) { Text("清除紀錄", color = Gray) }
             }
             TextButton(
@@ -392,18 +399,25 @@ fun MineScreen() {
             ) { Text(if (checking) "檢查中…" else "檢查更新", color = Gray) }
         }
         PrimaryScrollableTabRow(selectedTabIndex = page, containerColor = Bg, contentColor = Accent, edgePadding = 12.dp) {
-            listOf("收藏 ${Store.favorites.size}", "觀看紀錄 ${Store.history.size}").forEachIndexed { i, t ->
+            listOf("收藏 ${Store.favorites.size}", "待看 ${Store.watchLater.size}", "觀看紀錄 ${Store.history.size}").forEachIndexed { i, t ->
                 Tab(selected = i == page, onClick = { page = i }, text = { Text(t, color = if (i == page) Accent else Gray) })
             }
         }
-        val list: List<Pair<Anime, String?>> = if (page == 0) {
-            Store.favorites.map { it to null }
-        } else {
-            Store.history.map { it.anime.copy(remarks = "") to "看到第 ${it.episodeName} 集" }
+        val list: List<Pair<Anime, String?>> = when (page) {
+            0 -> Store.favorites.map { it to null }
+            1 -> Store.watchLater.map { it to null }
+            else -> Store.history.map { it.anime.copy(remarks = "") to "看到第 ${it.episodeName} 集" }
         }
         if (list.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(if (page == 0) "還沒有收藏，在作品頁按「收藏」加入" else "還沒有觀看紀錄", color = Gray)
+                Text(
+                    when (page) {
+                        0 -> "還沒有收藏，在作品頁按「收藏」加入"
+                        1 -> "待看清單是空的，在作品頁按「待看」加入"
+                        else -> "還沒有觀看紀錄"
+                    },
+                    color = Gray,
+                )
             }
         } else {
             LazyVerticalGrid(

@@ -304,6 +304,15 @@ const store = {
     else f.unshift(a)
     this.set('favorites', f)
   },
+  // 待看清單：想看但還沒開始看的作品，新加的在前面
+  later() { return this.get('watch_later', []) },
+  isLater(id) { return this.later().some((a) => a.id === id) },
+  toggleLater(a) {
+    let l = this.later()
+    if (l.some((x) => x.id === a.id)) l = l.filter((x) => x.id !== a.id)
+    else l.unshift(a)
+    this.set('watch_later', l)
+  },
   history() { return this.get('history', []) },
   last(id) { return this.history().find((h) => h.anime.id === id) },
   addHistory(item) {
@@ -411,8 +420,9 @@ function render() {
     case 'browse': return pageBrowse()
     case 'week': return pageWeek()
     case 'search': return pageSearch(params.get('q') || '')
-    case 'favorites': return pageLocal(true)
-    case 'history': return pageLocal(false)
+    case 'favorites': return pageLocal('favorites')
+    case 'later': return pageLocal('later')
+    case 'history': return pageLocal('history')
     case 'list': return pageList(params.get('title') || '', JSON.parse(params.get('q') || '{}'))
     case 'detail': return pageDetail(Number(parts[1]))
     case 'play': return pagePlay(Number(parts[1]), Number(parts[2]) || 0, Number(parts[3]) || 0)
@@ -465,6 +475,14 @@ async function pageHome() {
       view.appendChild(el)
     }
 
+    const later = store.later().slice(0, 18)
+    if (later.length) {
+      const head = h('<h2>待看清單<span class="more">全部 ›</span></h2>')
+      head.querySelector('.more').onclick = () => go('#/later')
+      const row = h('<div class="row"></div>')
+      later.forEach((x) => row.appendChild(card(x)))
+      view.append(head, row)
+    }
     const hist = store.history().slice(0, 18)
     if (hist.length) {
       view.appendChild(h('<h2>繼續觀看</h2>'))
@@ -564,19 +582,26 @@ function pageSearch(q) {
   setTimeout(() => input.focus(), 0)
 }
 
-function pageLocal(favorites) {
-  const head = h(`<h1 style="display:flex;align-items:center">${favorites ? '收藏' : '觀看紀錄'}</h1>`)
+const LOCAL_PAGES = {
+  favorites: { title: '收藏', empty: '還沒有收藏，在作品頁按「收藏」加入' },
+  later: { title: '待看清單', empty: '待看清單是空的，在作品頁按「＋ 待看」加入' },
+  history: { title: '觀看紀錄', empty: '還沒有觀看紀錄' },
+}
+
+function pageLocal(kind) {
+  const page = LOCAL_PAGES[kind]
+  const head = h(`<h1 style="display:flex;align-items:center">${page.title}</h1>`)
   view.appendChild(head)
-  const items = favorites
-    ? store.favorites().map((a) => [a, null])
+  const items = kind === 'favorites' ? store.favorites().map((a) => [a, null])
+    : kind === 'later' ? store.later().map((a) => [a, null])
     : store.history().map((x) => [{ ...x.anime, remarks: '' }, `看到第 ${x.episodeName} 集`])
-  if (!favorites && items.length) {
+  if (kind === 'history' && items.length) {
     const b = h('<button style="margin-left:auto;font-size:13px">清除全部紀錄</button>')
     b.onclick = () => { if (confirm('確定清除所有觀看紀錄和播放進度？')) { store.clearHistory(); render() } }
     head.appendChild(b)
   }
   if (!items.length) {
-    view.appendChild(h(`<div class="center">${favorites ? '還沒有收藏，在作品頁按「收藏」加入' : '還沒有觀看紀錄'}</div>`))
+    view.appendChild(h(`<div class="center">${page.empty}</div>`))
     return
   }
   const grid = h('<div class="grid"></div>')
@@ -637,6 +662,9 @@ async function pageDetail(id) {
     const fav = h(`<button>${store.isFav(id) ? '♥ 已收藏' : '♡ 收藏'}</button>`)
     fav.onclick = () => { store.toggleFav({ ...a }); draw() }
     actions.appendChild(fav)
+    const later = h(`<button>${store.isLater(id) ? '✓ 已在待看' : '＋ 待看'}</button>`)
+    later.onclick = () => { store.toggleLater({ ...a }); draw() }
+    actions.appendChild(later)
 
     area.innerHTML = ''
     if (!d.sources.length) {
