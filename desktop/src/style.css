@@ -157,6 +157,9 @@ h2 .more:hover { color: var(--accent); }
   padding: 14px 16px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
 }
 .update-bar > div { flex: 1 0 100%; }
+.update-bar .status { color: var(--accent); font-size: 13px; margin-top: 6px; }
+.update-bar .status:empty { display: none; }
+.update-bar button:disabled { opacity: 0.4; cursor: default; }
 .update-bar .notes { color: var(--gray); font-size: 12px; margin-top: 6px; white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
 
 /* ---------- 播放器 ---------- */

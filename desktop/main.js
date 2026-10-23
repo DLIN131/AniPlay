@@ -1,5 +1,6 @@
 const { app, BrowserWindow, session, shell } = require('electron')
 const path = require('path')
+const updater = require('./updater')
 
 // 影片 CDN 只對特定來源回 CORS，本機 file:// 頁面的 Origin 是 null，統一補上允許標頭
 function allowCors() {
@@ -25,6 +26,7 @@ function createWindow() {
     autoHideMenuBar: true,
     icon: path.join(__dirname, 'src', 'icon.png'),
     webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -52,6 +54,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   allowCors()
+  updater.setup()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

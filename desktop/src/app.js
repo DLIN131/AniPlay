@@ -871,11 +871,36 @@ async function checkUpdate() {
     // 發布說明裡 --- 以下是固定的下載資訊，Co-Authored-By 也不用給使用者看
     const notes = String(r.body || '').split('\n---')[0].split('\n').filter((l) => !l.startsWith('Co-Authored-By')).join('\n').trim()
     const bar = h(`<div class="update-bar">
-      <div><b>發現新版本 v1.0.${code}</b>（目前 v1.0.${current}）<div class="notes"></div></div>
-      <button class="primary">下載更新</button><button class="skip">略過這個版本</button><button class="later">稍後</button>
+      <div><b>發現新版本 v1.0.${code}</b>（目前 v1.0.${current}）<div class="notes"></div><div class="status"></div></div>
+      <button class="primary">立即更新</button><button class="skip">略過這個版本</button><button class="later">稍後</button>
     </div>`)
     bar.querySelector('.notes').textContent = notes
-    bar.querySelector('.primary').onclick = () => { window.open(asset.browser_download_url); bar.remove() }
+    const status = bar.querySelector('.status')
+    const primary = bar.querySelector('.primary')
+    const inApp = window.updater && (await window.updater.supported().catch(() => false))
+    let busy = false
+    primary.onclick = async () => {
+      // 不是打包版（例如開發時）就退回用瀏覽器下載
+      if (!inApp) { window.open(asset.browser_download_url); bar.remove(); return }
+      if (busy) return
+      busy = true
+      primary.textContent = '下載中…'
+      bar.querySelectorAll('.skip, .later').forEach((b) => { b.disabled = true })
+      try {
+        await window.updater.download(asset.browser_download_url, (p) => {
+          status.textContent = p >= 0 ? `下載中 ${p}%` : '下載中…'
+          if (p >= 100) status.textContent = '解壓縮中…'
+        })
+        status.textContent = '下載完成，程式會關閉並自動重新開啟'
+        primary.textContent = '安裝中…'
+        await window.updater.install()
+      } catch (err) {
+        busy = false
+        primary.textContent = '重試'
+        bar.querySelectorAll('.skip, .later').forEach((b) => { b.disabled = false })
+        status.textContent = `更新失敗：${String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`
+      }
+    }
     bar.querySelector('.skip').onclick = () => { localStorage.setItem('skipped_version', String(code)); bar.remove() }
     bar.querySelector('.later').onclick = () => bar.remove()
     document.body.appendChild(bar)
