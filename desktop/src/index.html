@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src * data: blob:; media-src * blob:; connect-src *; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:" />
+  <title>AniPlay</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="logo">AniPlay</div>
+    <nav>
+      <a href="#/home" data-tab="home">🏠 首頁</a>
+      <a href="#/browse" data-tab="browse">📚 分類</a>
+      <a href="#/week" data-tab="week">📅 時間表</a>
+      <a href="#/search" data-tab="search">🔍 搜尋</a>
+      <a href="#/favorites" data-tab="favorites">♥ 收藏</a>
+      <a href="#/history" data-tab="history">🕘 觀看紀錄</a>
+    </nav>
+    <div class="hint">F11 全螢幕</div>
+  </aside>
+  <main id="view"></main>
+  <script src="../node_modules/hls.js/dist/hls.min.js"></script>
+  <script src="version.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

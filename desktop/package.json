@@ -1,0 +1,19 @@
+{
+  "name": "aniplay-desktop",
+  "productName": "AniPlay",
+  "version": "1.0.0",
+  "description": "AniPlay 桌面版",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-packager . AniPlay --platform=win32 --arch=x64 --out=dist --overwrite --asar --icon=src/icon.ico --ignore=^/dist"
+  },
+  "dependencies": {
+    "hls.js": "1.6.13"
+  },
+  "devDependencies": {
+    "@electron/packager": "18.4.4",
+    "electron": "33.4.11"
+  }
+}
