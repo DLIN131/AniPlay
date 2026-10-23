@@ -86,6 +86,195 @@ async function detail(id) {
   return d
 }
 
+// ================= 彈幕 =================
+// 兩個來源合併：站內使用者彈幕 + 外部彙整彈幕 XML（各彈幕站匯總，B 站格式）。
+// 時間都是對應同一個影片檔的秒數。
+
+const hexColor = (v) => {
+  if (typeof v === 'string') {
+    const t = v.trim()
+    if (/^#[0-9a-f]{6}$/i.test(t)) return t.toLowerCase()
+    if (/^[0-9a-f]{6}$/i.test(t)) return '#' + t.toLowerCase()
+    if (t && Number.isFinite(Number(t))) return hexColor(Number(t))
+  }
+  if (typeof v === 'number' && Number.isFinite(v)) return '#' + Math.max(0, Math.min(0xffffff, Math.trunc(v))).toString(16).padStart(6, '0')
+  return '#ffffff'
+}
+
+async function postForm(path, playUrl) {
+  const fd = new FormData()
+  fd.append('play_url', playUrl)
+  const res = await fetch(BASE + path, { method: 'POST', body: fd, headers: { Accept: 'application/json' } })
+  const json = await res.json()
+  return json.code === 1 ? json.info : null
+}
+
+async function danmakuInternal(playUrl) {
+  const arr = await postForm('Scrolling/getScrolling', playUrl).catch(() => null)
+  return (Array.isArray(arr) ? arr : []).map((o) => {
+    let j = o.scroll_json
+    if (typeof j === 'string') { try { j = JSON.parse(j) } catch { j = null } }
+    if (!j) return null
+    const time = Number(j.time)
+    const text = String(j.content ?? j.text ?? '').trim()
+    if (!Number.isFinite(time) || time < 0 || !text) return null
+    const mode = Number(j.mode)
+    return { time, text, color: hexColor(j.style?.color ?? j.color), type: mode === 2 ? 'top' : mode === 3 ? 'bottom' : 'scroll' }
+  }).filter(Boolean)
+}
+
+/** 自家 CDN 的 …/01/playlist.m3u8 → …/01.xml（和網站播放器同樣的規則） */
+function fallbackXml(playUrl) {
+  try {
+    const u = new URL(playUrl)
+    const site = new URL(BASE).hostname.split('.').slice(1).join('.')
+    if (u.protocol !== 'https:' || !u.hostname.endsWith('.' + site) || !u.pathname.startsWith('/zijian/') || !u.pathname.endsWith('/playlist.m3u8')) return null
+    return `https://${u.hostname}${u.pathname.replace(/\/playlist\.m3u8$/, '.xml')}`
+  } catch {
+    return null
+  }
+}
+
+async function danmakuExternal(playUrl) {
+  try {
+    const info = await postForm('Scrolling/getVodOutScrolling', playUrl).catch(() => null)
+    const url = (typeof info === 'string' && info.trim().startsWith('http') ? info.trim() : null) || fallbackXml(playUrl)
+    if (!url) return []
+    const res = await fetch(url)
+    if (!res.ok) return []
+    const doc = new DOMParser().parseFromString(await res.text(), 'text/xml')
+    return [...doc.getElementsByTagName('d')].map((d) => {
+      const p = (d.getAttribute('p') || '').split(',')
+      const time = Number(p[0])
+      const text = (d.textContent || '').trim()
+      if (!Number.isFinite(time) || time < 0 || !text) return null
+      const mode = Number(p[1])
+      return { time, text, color: hexColor(Number(p[3])), type: mode === 5 ? 'top' : mode === 4 ? 'bottom' : 'scroll' }
+    }).filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+async function loadDanmaku(playUrl) {
+  const [a, b] = await Promise.all([danmakuInternal(playUrl), danmakuExternal(playUrl)])
+  return [...a, ...b].sort((x, y) => x.time - y.time)
+}
+
+const SCROLL_SEC = 8
+const FIXED_SEC = 4
+
+/**
+ * 彈幕層。每則彈幕的位置都由「影片目前時間 − 彈幕時間」算出來，不用自己的計時器，
+ * 所以暫停會停住、拖動會跳到對的位置、倍速時跟著變快，永遠和影片時間軸對齊。
+ */
+function danmakuLayer(canvas, video) {
+  const ctx = canvas.getContext('2d')
+  const st = {
+    items: [], on: store.get('dm_on', true), size: store.get('dm_size', 1), alpha: store.get('dm_alpha', 0.85),
+    area: store.get('dm_area', 0.5), offset: 0,
+  }
+  let active = [], lanes = {}, next = 0, lastPos = NaN, raf = 0, W = 0, H = 0
+
+  const reset = () => { active = []; lanes = { scroll: [], top: [], bottom: [] }; lastPos = NaN }
+  const lowerBound = (t) => {
+    let lo = 0, hi = st.items.length
+    while (lo < hi) { const m = (lo + hi) >> 1; st.items[m].time < t ? (lo = m + 1) : (hi = m) }
+    return lo
+  }
+  const fontSize = () => Math.max(14, H / 22) * st.size
+  const lineH = () => fontSize() * 1.25
+  const speed = (w) => (W + w) / SCROLL_SEC
+
+  function spawn(d) {
+    const w = ctx.measureText(d.text).width
+    const line = lineH()
+    if (d.type === 'scroll') {
+      const count = Math.max(1, Math.floor((H * st.area) / line))
+      for (let i = 0; i < count; i++) {
+        const last = lanes.scroll[i]
+        // 同軌道上一則的尾巴已經離開右邊，而且新的在上一則離開畫面前追不上它
+        const ok = !last || (
+          W - (d.time - last.d.time) * speed(last.w) + last.w + 16 <= W &&
+          W - (last.d.time + SCROLL_SEC - d.time) * speed(w) >= 0
+        )
+        if (ok) { const a = { d, w, lane: i }; lanes.scroll[i] = a; active.push(a); return }
+      }
+    } else {
+      const list = lanes[d.type]
+      const count = Math.max(1, Math.floor((H * 0.3) / line))
+      for (let i = 0; i < count; i++) {
+        const last = list[i]
+        if (!last || d.time - last.d.time >= FIXED_SEC) { const a = { d, w, lane: i }; list[i] = a; active.push(a); return }
+      }
+    }
+    // 軌道都滿了就不顯示，避免疊在一起
+  }
+
+  function frame() {
+    raf = requestAnimationFrame(frame)
+    const dpr = window.devicePixelRatio || 1
+    const cw = canvas.clientWidth, ch = canvas.clientHeight
+    if (cw !== W || ch !== H) {
+      W = cw; H = ch
+      canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr)
+      reset()
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, W, H)
+    if (!st.on || !st.items.length || !W) return
+
+    const pos = video.currentTime - st.offset
+    // 往回拖或往前跳超過 1 秒：重新排，「現在應該在畫面上」的彈幕也補上
+    if (Number.isNaN(lastPos) || pos < lastPos - 0.05 || pos - lastPos > 1) {
+      reset()
+      next = lowerBound(pos - SCROLL_SEC)
+    }
+    lastPos = pos
+
+    const fs = fontSize(), line = lineH()
+    ctx.font = `bold ${fs}px "Microsoft JhengHei", "PingFang TC", sans-serif`
+    ctx.textBaseline = 'alphabetic'
+    ctx.lineJoin = 'round'
+    ctx.lineWidth = Math.max(1.5, fs / 12)
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)'
+    ctx.globalAlpha = st.alpha
+
+    while (next < st.items.length && st.items[next].time <= pos) {
+      const d = st.items[next++]
+      const age = pos - d.time
+      if (age < (d.type === 'scroll' ? SCROLL_SEC : FIXED_SEC)) spawn(d)
+    }
+
+    active = active.filter((a) => {
+      const age = pos - a.d.time
+      let x, y
+      if (a.d.type === 'scroll') {
+        if (age > SCROLL_SEC) return false
+        x = W - age * speed(a.w); y = line * (a.lane + 1) - line * 0.22
+      } else {
+        if (age > FIXED_SEC) return false
+        x = (W - a.w) / 2
+        y = a.d.type === 'top' ? line * (a.lane + 1) - line * 0.22 : H - line * a.lane - line * 0.35
+      }
+      ctx.strokeText(a.d.text, x, y)
+      ctx.fillStyle = a.d.color
+      ctx.fillText(a.d.text, x, y)
+      return true
+    })
+    ctx.globalAlpha = 1
+  }
+
+  reset()
+  raf = requestAnimationFrame(frame)
+  return {
+    st,
+    set(items) { st.items = items; reset() },
+    update(k, v) { st[k] = v; if (k !== 'offset') store.set('dm_' + k, v); reset() },
+    destroy() { cancelAnimationFrame(raf) },
+  }
+}
+
 // ================= 本機儲存（收藏、紀錄、進度） =================
 
 const store = {
@@ -476,7 +665,7 @@ async function pagePlay(id, source, ep) {
 
   const el = h(`<div class="player-page">
     <div class="player-main">
-      <div class="video-wrap"><video controls autoplay></video><div class="toast" style="opacity:0"></div></div>
+      <div class="video-wrap"><video controls autoplay></video><canvas class="danmaku"></canvas><div class="toast" style="opacity:0"></div></div>
       <div class="player-title">
         <button class="back">‹ 返回</button>
         <h1>${esc(a.name)}${src.episodes.length > 1 ? `　第 ${esc(e.name)} 集` : ''}</h1>
@@ -484,7 +673,15 @@ async function pagePlay(id, source, ep) {
         <button class="next">下一集 ⏭</button>
         <select class="speed"></select>
       </div>
-      <div class="keys">空白鍵 暫停／播放　← → 快退／快進 10 秒　↑ ↓ 音量　F 全螢幕　N 下一集　P 上一集</div>
+      <div class="dm-bar">
+        <button class="dm-toggle"></button>
+        <span class="muted dm-count"></span>
+        <label>時間微調 <button class="dm-minus">−0.5s</button> <span class="dm-offset"></span> <button class="dm-plus">+0.5s</button> <button class="dm-zero">歸零</button></label>
+        <label>大小 <select class="dm-size"></select></label>
+        <label>不透明度 <select class="dm-alpha"></select></label>
+        <label>範圍 <select class="dm-area"></select></label>
+      </div>
+      <div class="keys">空白鍵 暫停／播放　← → 快退／快進 10 秒　↑ ↓ 音量　F 全螢幕　N 下一集　P 上一集　D 彈幕開關　[ ] 彈幕時間微調</div>
     </div>
     <div class="player-side"><b>選集</b>${d.sources.length > 1 ? `<span class="muted">（${esc(src.name)}）</span>` : ''}<div class="episodes" style="margin-top:10px"></div></div>
   </div>`)
@@ -532,7 +729,9 @@ async function pagePlay(id, source, ep) {
   // 播放：Chromium 不支援 HLS，用 hls.js
   let hls = null
   const start = store.pos(id, source, ep)
-  if (window.Hls && Hls.isSupported()) {
+  if (!/\.m3u8(\?|$)/i.test(e.url)) {
+    video.src = e.url
+  } else if (window.Hls && Hls.isSupported()) {
     hls = new Hls({ maxBufferLength: 60 })
     hls.loadSource(e.url)
     hls.attachMedia(video)
@@ -552,6 +751,52 @@ async function pagePlay(id, source, ep) {
       showToast(`從 ${fmt(start)} 繼續播放`)
     }
   }, { once: true })
+
+  // 彈幕
+  const dm = danmakuLayer(el.querySelector('canvas.danmaku'), video)
+  const offsetKey = `dm_offset_${id}`
+  dm.update('offset', Number(localStorage.getItem(offsetKey)) || 0)
+  const fmtOffset = (v) => (v === 0 ? '不調整' : v > 0 ? `延後 ${v.toFixed(1)} 秒` : `提前 ${(-v).toFixed(1)} 秒`)
+  const dmToggle = el.querySelector('.dm-toggle')
+  const dmCount = el.querySelector('.dm-count')
+  const drawDm = () => {
+    dmToggle.textContent = dm.st.on ? '彈幕：開' : '彈幕：關'
+    dmToggle.classList.toggle('on', dm.st.on)
+    el.querySelector('.dm-offset').textContent = fmtOffset(dm.st.offset)
+  }
+  const toggleDm = () => { dm.update('on', !dm.st.on); drawDm(); showToast(dm.st.on ? '彈幕已開啟' : '彈幕已關閉') }
+  // 正數＝彈幕延後出現；這部作品的每一集都套用
+  const setOffset = (v) => {
+    v = Math.round(Math.max(-30, Math.min(30, v)) * 10) / 10
+    dm.update('offset', v)
+    v ? localStorage.setItem(offsetKey, String(v)) : localStorage.removeItem(offsetKey)
+    drawDm()
+    showToast(`彈幕${fmtOffset(v)}`)
+  }
+  dmToggle.onclick = toggleDm
+  el.querySelector('.dm-minus').onclick = () => setOffset(dm.st.offset - 0.5)
+  el.querySelector('.dm-plus').onclick = () => setOffset(dm.st.offset + 0.5)
+  el.querySelector('.dm-zero').onclick = () => setOffset(0)
+  const fillSelect = (cls, key, opts) => {
+    const sel = el.querySelector(cls)
+    opts.forEach(([v, t]) => {
+      const o = h(`<option value="${v}">${t}</option>`)
+      if (Math.abs(v - dm.st[key]) < 0.01) o.selected = true
+      sel.appendChild(o)
+    })
+    sel.onchange = () => dm.update(key, Number(sel.value))
+  }
+  fillSelect('.dm-size', 'size', [[0.75, '小'], [1, '中'], [1.25, '大'], [1.5, '特大']])
+  fillSelect('.dm-alpha', 'alpha', [[1, '100%'], [0.85, '85%'], [0.7, '70%'], [0.5, '50%'], [0.3, '30%']])
+  fillSelect('.dm-area', 'area', [[0.25, '1/4'], [0.5, '半屏'], [0.75, '3/4'], [1, '全屏']])
+  drawDm()
+  dmCount.textContent = '彈幕載入中…'
+  loadDanmaku(e.url).then((items) => {
+    if (route.token !== token) return
+    dm.set(items)
+    dmCount.textContent = items.length ? `共 ${items.length} 則` : '這集沒有彈幕'
+    if (items.length && dm.st.on) showToast(`已載入 ${items.length} 則彈幕`)
+  })
 
   // 進度：每 5 秒存一次，看到最後 30 秒就當作看完
   const save = () => {
@@ -576,6 +821,9 @@ async function pagePlay(id, source, ep) {
       case 'f': case 'F': document.fullscreenElement ? document.exitFullscreen() : el.querySelector('.video-wrap').requestFullscreen(); break
       case 'n': case 'N': goEp(ep + 1); break
       case 'p': case 'P': goEp(ep - 1); break
+      case 'd': case 'D': toggleDm(); break
+      case '[': setOffset(dm.st.offset - 0.5); break
+      case ']': setOffset(dm.st.offset + 0.5); break
       default: return
     }
     ev.preventDefault()
@@ -592,6 +840,7 @@ async function pagePlay(id, source, ep) {
     clearInterval(timer)
     document.removeEventListener('keydown', onKey)
     if (document.fullscreenElement) document.exitFullscreen()
+    dm.destroy()
     if (hls) hls.destroy()
     video.removeAttribute('src')
     video.load()

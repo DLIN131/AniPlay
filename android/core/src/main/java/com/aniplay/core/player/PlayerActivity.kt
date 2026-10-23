@@ -38,7 +38,9 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.aniplay.core.net.Anime
+import com.aniplay.core.Prefs
 import com.aniplay.core.net.Api
+import com.aniplay.core.net.DanmakuApi
 import com.aniplay.core.net.HistoryItem
 import com.aniplay.core.net.Store
 import kotlinx.coroutines.Job
@@ -51,7 +53,8 @@ import kotlinx.coroutines.launch
  *
  * 觸控：點一下顯示／隱藏控制列，雙擊左右半邊快退／快進 10 秒，控制列有上一集、下一集、選集、倍速。
  * 遙控器：左右 = 快退／快進（長按加速），OK = 暫停／播放，長按 OK = 按住期間 2 倍速，
- * 上鍵或選單鍵 = 選集，下鍵 = 顯示進度列，返回 = 離開。看完自動播下一集。
+ * 上鍵或選單鍵 = 選項（選集、彈幕、倍速），下鍵 = 顯示進度列，返回 = 離開。看完自動播下一集。
+ * 彈幕：站內＋外部彙整來源，依影片時間對齊，可微調時間差。
  */
 @OptIn(UnstableApi::class)
 class PlayerActivity : ComponentActivity() {
@@ -95,6 +98,9 @@ class PlayerActivity : ComponentActivity() {
     private var ended = false
 
     private lateinit var controls: View
+    private lateinit var danmaku: DanmakuView
+    private var danmakuJob: Job? = null
+    private var danmakuCount = 0
     private lateinit var titleView: TextView
     private lateinit var status: TextView
     private lateinit var timeText: TextView
@@ -188,6 +194,14 @@ class PlayerActivity : ComponentActivity() {
             setPadding(28, 14, 28, 14)
             visibility = View.GONE
         }
+        danmaku = DanmakuView(this).apply {
+            positionMs = { player.currentPosition }
+            showing = Prefs.danmakuOn
+            sizeScale = Prefs.danmakuSize
+            opacity = Prefs.danmakuAlpha
+            area = Prefs.danmakuArea
+            offsetMs = Prefs.danmakuOffset(anime.id)
+        }
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (controls.visibility == View.VISIBLE) controls.visibility = View.GONE else showOverlay()
@@ -211,6 +225,7 @@ class PlayerActivity : ComponentActivity() {
         setContentView(FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
             addView(playerView)
+            addView(danmaku, FrameLayout.LayoutParams(-1, -1))
             addView(touchLayer, FrameLayout.LayoutParams(-1, -1))
             controls = buildOverlay()
             addView(controls, FrameLayout.LayoutParams(-1, -1))
@@ -254,6 +269,7 @@ class PlayerActivity : ComponentActivity() {
         }
         val back = button("‹ 返回") { finish() }
         val episodes = button("選集") { chooseEpisode() }
+        val danmakuBtn = button("彈幕") { danmakuSettings() }
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -263,6 +279,8 @@ class PlayerActivity : ComponentActivity() {
             )
             addView(back)
             addView(titleView, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = 24; rightMargin = 24 })
+            addView(danmakuBtn)
+            addView(View(context), LinearLayout.LayoutParams(16, 1))
             addView(episodes)
         }
 
@@ -360,11 +378,24 @@ class PlayerActivity : ComponentActivity() {
         val item = MediaItem.Builder().setUri(url).apply {
             if (url.contains(".m3u8", ignoreCase = true)) setMimeType(MimeTypes.APPLICATION_M3U8)
         }.build()
+        loadDanmaku(url)
         player.setMediaItem(item, positionMs.coerceAtLeast(0L))
         player.prepare()
         player.playWhenReady = true
         Store.addHistory(HistoryItem(anime, source, ep, name))
         showOverlay()
+    }
+
+    private fun loadDanmaku(url: String) {
+        danmakuJob?.cancel()
+        danmakuCount = 0
+        danmaku.setDanmaku(emptyList())
+        danmakuJob = lifecycleScope.launch {
+            val list = runCatching { DanmakuApi.load(url) }.getOrDefault(emptyList())
+            danmakuCount = list.size
+            danmaku.setDanmaku(list)
+            if (list.isNotEmpty() && Prefs.danmakuOn) showHint("已載入 ${list.size} 則彈幕")
+        }
     }
 
     private fun duration(): Long? = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
@@ -488,6 +519,84 @@ class PlayerActivity : ComponentActivity() {
             .show()
     }
 
+    // ---------- 選項、彈幕設定 ----------
+
+    private fun dialog() = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+
+    /** 遙控器上鍵：所有選項集中在一個選單 */
+    private fun showOptions() {
+        val labels = arrayOf(
+            "選集（第 ${names.getOrElse(episode) { "${episode + 1}" }} 集）",
+            "彈幕：${if (danmaku.showing) "開" else "關"}",
+            "彈幕設定",
+            "播放速度：${speed}x",
+        )
+        dialog().setTitle("選項").setItems(labels) { _, i ->
+            when (i) {
+                0 -> chooseEpisode()
+                1 -> toggleDanmaku()
+                2 -> danmakuSettings()
+                3 -> chooseSpeed()
+            }
+        }.show()
+    }
+
+    private fun toggleDanmaku() {
+        danmaku.showing = !danmaku.showing
+        Prefs.danmakuOn = danmaku.showing
+        showHint(if (danmaku.showing) "彈幕已開啟（$danmakuCount 則）" else "彈幕已關閉")
+    }
+
+    private fun fmtOffset(ms: Long) = when {
+        ms == 0L -> "不調整"
+        ms > 0 -> "延後 %.1f 秒".format(ms / 1000f)
+        else -> "提前 %.1f 秒".format(-ms / 1000f)
+    }
+
+    private fun danmakuSettings() {
+        val sizes = listOf(0.75f to "小", 1f to "中", 1.25f to "大", 1.5f to "特大")
+        val alphas = listOf(1f to "不透明", 0.85f to "85%", 0.7f to "70%", 0.5f to "50%", 0.3f to "30%")
+        val areas = listOf(0.25f to "1/4 畫面", 0.5f to "半個畫面", 0.75f to "3/4 畫面", 1f to "全畫面")
+        fun label(list: List<Pair<Float, String>>, v: Float) = list.minBy { kotlin.math.abs(it.first - v) }.second
+        val labels = arrayOf(
+            "彈幕：${if (danmaku.showing) "開" else "關"}（共 $danmakuCount 則）",
+            "時間微調：${fmtOffset(danmaku.offsetMs)}",
+            "字體大小：${label(sizes, danmaku.sizeScale)}",
+            "不透明度：${label(alphas, danmaku.opacity)}",
+            "顯示範圍：${label(areas, danmaku.area)}",
+        )
+        fun pick(title: String, list: List<Pair<Float, String>>, current: Float, apply: (Float) -> Unit) {
+            val idx = list.indexOfFirst { kotlin.math.abs(it.first - current) < 0.01f }
+            dialog().setTitle(title).setSingleChoiceItems(list.map { it.second }.toTypedArray(), idx) { d, i ->
+                d.dismiss()
+                apply(list[i].first)
+                danmakuSettings()
+            }.show()
+        }
+        dialog().setTitle("彈幕設定").setItems(labels) { _, i ->
+            when (i) {
+                0 -> { toggleDanmaku(); danmakuSettings() }
+                1 -> chooseOffset()
+                2 -> pick("字體大小", sizes, danmaku.sizeScale) { danmaku.sizeScale = it; Prefs.danmakuSize = it }
+                3 -> pick("不透明度", alphas, danmaku.opacity) { danmaku.opacity = it; Prefs.danmakuAlpha = it }
+                4 -> pick("顯示範圍", areas, danmaku.area) { danmaku.area = it; Prefs.danmakuArea = it }
+            }
+        }.show()
+    }
+
+    /** 彈幕和畫面對不上時手動調整，這部作品的每一集都套用 */
+    private fun chooseOffset() {
+        val steps = (-100..100 step 5).map { it * 100L } // -10 秒 ~ +10 秒，每 0.5 秒
+        val labels = steps.map { fmtOffset(it) }.toTypedArray()
+        dialog().setTitle("彈幕時間微調").setSingleChoiceItems(labels, steps.indexOf(danmaku.offsetMs).coerceAtLeast(steps.indexOf(0L))) { d, i ->
+            d.dismiss()
+            danmaku.offsetMs = steps[i]
+            Prefs.setDanmakuOffset(anime.id, steps[i])
+            showHint("彈幕${fmtOffset(steps[i])}")
+            danmakuSettings()
+        }.show()
+    }
+
     // ---------- 遙控器 ----------
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -554,7 +663,7 @@ class PlayerActivity : ComponentActivity() {
                 return true
             }
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_SETTINGS -> {
-                if (first) chooseEpisode()
+                if (first) showOptions()
                 return true
             }
             KeyEvent.KEYCODE_DPAD_DOWN -> {
@@ -598,6 +707,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        danmakuJob?.cancel()
         if (::player.isInitialized) player.release()
     }
 }
