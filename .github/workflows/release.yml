@@ -72,7 +72,9 @@ jobs:
           "window.APP_VERSION = ${{ github.run_number }}" | Set-Content -Encoding utf8 src/version.js
           npm ci --no-audit --no-fund
           npm version "1.0.${{ github.run_number }}" --no-git-tag-version
-          npx electron-packager . AniPlay --platform=win32 --arch=x64 --out=dist --overwrite --asar --icon=src/icon.ico --ignore="^/dist" --ignore="^/devserver.js" --app-version="1.0.${{ github.run_number }}"
+          # 排除規則寫在 pack.js（命令列的 ^ 會被 cmd.exe 吃掉，連 hls.js/dist 都被排除）
+          $env:APP_VERSION = "1.0.${{ github.run_number }}"
+          node pack.js dist
           New-Item -ItemType Directory -Force ../out | Out-Null
           Compress-Archive -Path dist/AniPlay-win32-x64/* -DestinationPath ../out/AniPlay-Windows.zip
 

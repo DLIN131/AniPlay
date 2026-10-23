@@ -173,12 +173,74 @@ h2 .more:hover { color: var(--accent); }
 }
 .video-wrap:fullscreen { border-radius: 0; aspect-ratio: auto; width: 100%; height: 100%; }
 .video-wrap canvas.danmaku { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.dm-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 4px 0; font-size: 13px; }
-.dm-bar label { display: flex; align-items: center; gap: 6px; color: var(--gray); }
-.dm-bar label button { padding: 4px 10px; font-size: 12px; }
-.dm-bar .dm-offset { color: var(--text); min-width: 76px; text-align: center; }
-.dm-bar select, .player-title select { background: rgba(255,255,255,.08); color: #fff; border: none; border-radius: 14px; padding: 4px 8px; font: inherit; }
-.dm-bar option, .player-title option { background: #1c1c24; }
+.video-wrap .toast { z-index: 3; }
+
+/* 疊在影片上的控制列；滑鼠不動又在播放時隱藏 */
+.video-wrap { cursor: none; }
+.video-wrap.show { cursor: default; }
+.ctrl { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; }
+.ctrl-click { flex: 1; }
+.ctrl-top, .ctrl-bottom { transition: opacity 0.25s; opacity: 0; pointer-events: none; }
+.video-wrap.show .ctrl-top, .video-wrap.show .ctrl-bottom { opacity: 1; pointer-events: auto; }
+.ctrl-top {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px 28px;
+  background: linear-gradient(rgba(0, 0, 0, 0.7), transparent);
+}
+.ctrl-top .ctrl-title { font-size: 16px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctrl-top .back-in { display: none; font-size: 18px; padding: 2px 12px; }
+.video-wrap:fullscreen .ctrl-top .back-in { display: inline-block; }
+/* 一般模式下標題已經在影片下面，不重複顯示 */
+.video-wrap:not(:fullscreen) .ctrl-top { visibility: hidden; }
+.ctrl-bottom { padding: 24px 14px 10px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.8)); }
+.ctrl-row { display: flex; align-items: center; gap: 6px; }
+.ctrl-row button { background: transparent; padding: 6px 10px; border-radius: 8px; font-size: 14px; }
+.ctrl-row button:hover { background: rgba(255, 255, 255, 0.15); }
+.ctrl-row button:disabled { opacity: 0.3; cursor: default; background: transparent; }
+.ctrl-row .c-play { font-size: 16px; min-width: 40px; }
+.ctrl-row .c-dm { border: 1.5px solid rgba(255, 255, 255, 0.5); padding: 3px 8px; font-weight: bold; }
+.ctrl-row .c-dm.on { background: var(--accent); border-color: var(--accent); }
+.ctrl-row .c-time { font-size: 13px; color: rgba(255, 255, 255, 0.9); margin: 0 6px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ctrl-row .c-vol { width: 80px; accent-color: var(--accent); }
+.ctrl-row .grow { flex: 1; }
+.video-wrap:fullscreen .ctrl-row button { font-size: 16px; }
+
+.seek { position: relative; height: 16px; cursor: pointer; margin-bottom: 4px; }
+.seek::before, .seek-buf, .seek-play {
+  content: ''; position: absolute; left: 0; top: 6px; height: 4px; border-radius: 2px;
+}
+.seek::before { right: 0; background: rgba(255, 255, 255, 0.25); }
+.seek-buf { background: rgba(255, 255, 255, 0.45); }
+.seek-play { background: var(--accent); }
+.seek-knob {
+  position: absolute; top: 2px; width: 12px; height: 12px; margin-left: -6px;
+  border-radius: 50%; background: var(--accent); transform: scale(0); transition: transform 0.15s;
+}
+.seek:hover .seek-knob { transform: scale(1); }
+.seek:hover::before, .seek:hover .seek-buf, .seek:hover .seek-play { top: 5px; height: 6px; }
+.seek-tip {
+  position: absolute; bottom: 18px; transform: translateX(-50%); background: rgba(0, 0, 0, 0.8);
+  padding: 2px 6px; border-radius: 4px; font-size: 12px; display: none; pointer-events: none;
+}
+.seek:hover .seek-tip { display: block; }
+
+/* 彈幕設定、選集、倍速面板：在影片裡面，全螢幕也看得到 */
+.panel {
+  position: absolute; right: 14px; bottom: 76px; z-index: 4; display: none;
+  width: 360px; max-width: calc(100% - 28px); max-height: calc(100% - 110px); overflow-y: auto;
+  background: rgba(24, 24, 32, 0.94); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px;
+  padding: 14px 16px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); cursor: default;
+}
+.panel.open { display: block; }
+.panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.panel-head .muted { font-size: 12px; }
+.panel-head .panel-close { margin-left: auto; background: transparent; padding: 2px 8px; }
+.panel .row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+.panel .row .label { width: 64px; flex-shrink: 0; color: var(--gray); font-size: 13px; }
+.panel .opts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.panel .opts button { padding: 4px 12px; font-size: 13px; }
+.panel .dm-offset { min-width: 82px; text-align: center; font-size: 13px; }
+.ep-panel .episodes { grid-template-columns: repeat(4, 1fr); }
+.speed-panel { width: 220px; }
 .player-title { display: flex; align-items: center; gap: 10px; margin: 14px 0 6px; }
 .player-title h1 { margin: 0; font-size: 20px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player-side { width: 300px; flex-shrink: 0; background: var(--surface); border-radius: 12px; padding: 14px; max-height: calc(100vh - 60px); overflow-y: auto; }

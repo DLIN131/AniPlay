@@ -553,48 +553,117 @@ class PlayerActivity : ComponentActivity() {
         else -> "提前 %.1f 秒".format(-ms / 1000f)
     }
 
+    /**
+     * 彈幕設定面板：所有選項在同一個畫面，點了立刻套用，不會一層層跳視窗。
+     * 選項都是可聚焦的按鈕，觸控和遙控器方向鍵都能操作。
+     */
     private fun danmakuSettings() {
-        val sizes = listOf(0.75f to "小", 1f to "中", 1.25f to "大", 1.5f to "特大")
-        val alphas = listOf(1f to "不透明", 0.85f to "85%", 0.7f to "70%", 0.5f to "50%", 0.3f to "30%")
-        val areas = listOf(0.25f to "1/4 畫面", 0.5f to "半個畫面", 0.75f to "3/4 畫面", 1f to "全畫面")
-        fun label(list: List<Pair<Float, String>>, v: Float) = list.minBy { kotlin.math.abs(it.first - v) }.second
-        val labels = arrayOf(
-            "彈幕：${if (danmaku.showing) "開" else "關"}（共 $danmakuCount 則）",
-            "時間微調：${fmtOffset(danmaku.offsetMs)}",
-            "字體大小：${label(sizes, danmaku.sizeScale)}",
-            "不透明度：${label(alphas, danmaku.opacity)}",
-            "顯示範圍：${label(areas, danmaku.area)}",
-        )
-        fun pick(title: String, list: List<Pair<Float, String>>, current: Float, apply: (Float) -> Unit) {
-            val idx = list.indexOfFirst { kotlin.math.abs(it.first - current) < 0.01f }
-            dialog().setTitle(title).setSingleChoiceItems(list.map { it.second }.toTypedArray(), idx) { d, i ->
-                d.dismiss()
-                apply(list[i].first)
-                danmakuSettings()
-            }.show()
-        }
-        dialog().setTitle("彈幕設定").setItems(labels) { _, i ->
-            when (i) {
-                0 -> { toggleDanmaku(); danmakuSettings() }
-                1 -> chooseOffset()
-                2 -> pick("字體大小", sizes, danmaku.sizeScale) { danmaku.sizeScale = it; Prefs.danmakuSize = it }
-                3 -> pick("不透明度", alphas, danmaku.opacity) { danmaku.opacity = it; Prefs.danmakuAlpha = it }
-                4 -> pick("顯示範圍", areas, danmaku.area) { danmaku.area = it; Prefs.danmakuArea = it }
-            }
-        }.show()
-    }
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+        val refreshers = ArrayList<() -> Unit>()
 
-    /** 彈幕和畫面對不上時手動調整，這部作品的每一集都套用 */
-    private fun chooseOffset() {
-        val steps = (-100..100 step 5).map { it * 100L } // -10 秒 ~ +10 秒，每 0.5 秒
-        val labels = steps.map { fmtOffset(it) }.toTypedArray()
-        dialog().setTitle("彈幕時間微調").setSingleChoiceItems(labels, steps.indexOf(danmaku.offsetMs).coerceAtLeast(steps.indexOf(0L))) { d, i ->
-            d.dismiss()
-            danmaku.offsetMs = steps[i]
-            Prefs.setDanmakuOffset(anime.id, steps[i])
-            showHint("彈幕${fmtOffset(steps[i])}")
-            danmakuSettings()
-        }.show()
+        fun chip(text: String, isOn: () -> Boolean, onClick: () -> Unit): TextView = TextView(this).apply {
+            this.text = text
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            isFocusable = true
+            isClickable = true
+            minWidth = dp(56)
+            fun paint() {
+                val on = isOn()
+                val focused = isFocused
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(18).toFloat()
+                    setColor(
+                        when {
+                            focused -> Color.WHITE
+                            on -> ACCENT
+                            else -> 0x26FFFFFF
+                        }
+                    )
+                }
+                setTextColor(if (focused) Color.BLACK else Color.WHITE)
+            }
+            setOnFocusChangeListener { _, _ -> paint() }
+            setOnClickListener {
+                onClick()
+                refreshers.forEach { it() }
+            }
+            refreshers += ::paint
+            paint()
+        }
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        fun row(label: String, vararg views: View) {
+            val line = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6), 0, dp(6))
+            }
+            line.addView(TextView(this).apply {
+                text = label
+                textSize = 14f
+                setTextColor(0xFFB0B0BC.toInt())
+            }, LinearLayout.LayoutParams(dp(76), -2))
+            val opts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            views.forEach { v -> opts.addView(v, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(8) }) }
+            line.addView(android.widget.HorizontalScrollView(this).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(opts)
+            })
+            content.addView(line)
+        }
+
+        fun setOn(on: Boolean) {
+            if (danmaku.showing != on) toggleDanmaku()
+        }
+        val onBtn = chip("開", { danmaku.showing }) { setOn(true) }
+        row("彈幕", onBtn, chip("關", { !danmaku.showing }) { setOn(false) })
+
+        val offsetText = TextView(this).apply {
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            minWidth = dp(96)
+        }
+        refreshers += { offsetText.text = fmtOffset(danmaku.offsetMs) }
+        fun setOffset(ms: Long) {
+            val v = ms.coerceIn(-30_000L, 30_000L)
+            danmaku.offsetMs = v
+            Prefs.setDanmakuOffset(anime.id, v)
+        }
+        row(
+            "時間微調",
+            chip("−0.5s", { false }) { setOffset(danmaku.offsetMs - 500) },
+            offsetText,
+            chip("+0.5s", { false }) { setOffset(danmaku.offsetMs + 500) },
+            chip("歸零", { false }) { setOffset(0) },
+        )
+
+        fun group(label: String, list: List<Pair<Float, String>>, get: () -> Float, set: (Float) -> Unit) {
+            row(label, *list.map { (v, t) -> chip(t, { kotlin.math.abs(get() - v) < 0.01f }) { set(v) } }.toTypedArray())
+        }
+        group("字體大小", listOf(0.75f to "小", 1f to "中", 1.25f to "大", 1.5f to "特大"), { danmaku.sizeScale }) {
+            danmaku.sizeScale = it; Prefs.danmakuSize = it
+        }
+        group("不透明度", listOf(1f to "100%", 0.85f to "85%", 0.7f to "70%", 0.5f to "50%", 0.3f to "30%"), { danmaku.opacity }) {
+            danmaku.opacity = it; Prefs.danmakuAlpha = it
+        }
+        group("顯示範圍", listOf(0.25f to "1/4", 0.5f to "半屏", 0.75f to "3/4", 1f to "全屏"), { danmaku.area }) {
+            danmaku.area = it; Prefs.danmakuArea = it
+        }
+        refreshers.forEach { it() }
+
+        dialog()
+            .setTitle("彈幕設定（共 $danmakuCount 則）")
+            .setView(android.widget.ScrollView(this).apply { addView(content) })
+            .setPositiveButton("完成", null)
+            .show()
+        onBtn.post { onBtn.requestFocus() }
     }
 
     // ---------- 遙控器 ----------

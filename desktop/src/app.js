@@ -675,31 +675,63 @@ async function pagePlay(id, source, ep) {
   const e = src.episodes[ep]
   store.addHistory({ anime: { ...a }, source, episode: ep, episodeName: e.name })
 
+  // 控制列全部疊在影片上（video-wrap 裡），全螢幕放大的是整個 video-wrap，
+  // 所以全螢幕時彈幕、控制列、彈幕設定、選集都還在
+  const multi = src.episodes.length > 1
   const el = h(`<div class="player-page">
     <div class="player-main">
-      <div class="video-wrap"><video controls autoplay controlslist="nofullscreen" disablepictureinpicture></video><canvas class="danmaku"></canvas><div class="toast" style="opacity:0"></div></div>
+      <div class="video-wrap">
+        <video autoplay disablepictureinpicture></video>
+        <canvas class="danmaku"></canvas>
+        <div class="toast" style="opacity:0"></div>
+        <div class="ctrl">
+          <div class="ctrl-top"><button class="back-in">‹</button><span class="ctrl-title">${esc(a.name)}${multi ? `　第 ${esc(e.name)} 集` : ''}</span></div>
+          <div class="ctrl-click"></div>
+          <div class="panel dm-panel">
+            <div class="panel-head"><b>彈幕設定</b><span class="muted dm-count"></span><button class="panel-close">✕</button></div>
+            <div class="row"><span class="label">彈幕</span><div class="opts dm-on"></div></div>
+            <div class="row"><span class="label">時間微調</span><div class="opts"><button class="dm-minus">−0.5s</button><span class="dm-offset"></span><button class="dm-plus">+0.5s</button><button class="dm-zero">歸零</button></div></div>
+            <div class="row"><span class="label">字體大小</span><div class="opts dm-size"></div></div>
+            <div class="row"><span class="label">不透明度</span><div class="opts dm-alpha"></div></div>
+            <div class="row"><span class="label">顯示範圍</span><div class="opts dm-area"></div></div>
+          </div>
+          <div class="panel ep-panel">
+            <div class="panel-head"><b>選集</b>${d.sources.length > 1 ? `<span class="muted">${esc(src.name)}</span>` : ''}<button class="panel-close">✕</button></div>
+            <div class="episodes"></div>
+          </div>
+          <div class="panel speed-panel">
+            <div class="panel-head"><b>播放速度</b><button class="panel-close">✕</button></div>
+            <div class="opts speed-opts"></div>
+          </div>
+          <div class="ctrl-bottom">
+            <div class="seek"><div class="seek-buf"></div><div class="seek-play"></div><div class="seek-knob"></div><div class="seek-tip"></div></div>
+            <div class="ctrl-row">
+              <button class="c-play" title="播放／暫停（空白鍵）">▶</button>
+              ${multi ? '<button class="c-prev" title="上一集（P）">⏮</button><button class="c-next" title="下一集（N）">⏭</button>' : ''}
+              <span class="c-time">0:00 / 0:00</span>
+              <button class="c-mute" title="靜音">🔊</button><input class="c-vol" type="range" min="0" max="1" step="0.05">
+              <span class="grow"></span>
+              <button class="c-dm" title="彈幕開關（D）">彈</button>
+              <button class="c-dmset" title="彈幕設定">彈幕設定</button>
+              <button class="c-speed" title="播放速度">1x</button>
+              ${multi ? '<button class="c-eps" title="選集">選集</button>' : ''}
+              <button class="c-fs" title="全螢幕（F／雙擊影片）">⛶</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="player-title">
         <button class="back">‹ 返回</button>
-        <h1>${esc(a.name)}${src.episodes.length > 1 ? `　第 ${esc(e.name)} 集` : ''}</h1>
-        <button class="prev">⏮ 上一集</button>
-        <button class="next">下一集 ⏭</button>
-        <select class="speed"></select>
-        <button class="fs">⛶ 全螢幕</button>
+        <h1>${esc(a.name)}${multi ? `　第 ${esc(e.name)} 集` : ''}</h1>
       </div>
-      <div class="dm-bar">
-        <button class="dm-toggle"></button>
-        <span class="muted dm-count"></span>
-        <label>時間微調 <button class="dm-minus">−0.5s</button> <span class="dm-offset"></span> <button class="dm-plus">+0.5s</button> <button class="dm-zero">歸零</button></label>
-        <label>大小 <select class="dm-size"></select></label>
-        <label>不透明度 <select class="dm-alpha"></select></label>
-        <label>範圍 <select class="dm-area"></select></label>
-      </div>
-      <div class="keys">空白鍵 暫停／播放　← → 快退／快進 10 秒　↑ ↓ 音量　F 全螢幕　N 下一集　P 上一集　D 彈幕開關　[ ] 彈幕時間微調</div>
+      <div class="keys">空白鍵 暫停／播放　← → 快退／快進 10 秒　↑ ↓ 音量　F 全螢幕　N 下一集　P 上一集　D 彈幕開關　[ ] 彈幕時間微調　Esc 關閉面板／離開全螢幕</div>
     </div>
     <div class="player-side"><b>選集</b>${d.sources.length > 1 ? `<span class="muted">（${esc(src.name)}）</span>` : ''}<div class="episodes" style="margin-top:10px"></div></div>
   </div>`)
-  const video = el.querySelector('video')
-  const toast = el.querySelector('.toast')
+  const $ = (q) => el.querySelector(q)
+  const wrap = $('.video-wrap')
+  const video = $('video')
+  const toast = $('.toast')
   let toastTimer
   const showToast = (t) => {
     toast.textContent = t
@@ -708,38 +740,30 @@ async function pagePlay(id, source, ep) {
     toastTimer = setTimeout(() => { toast.style.opacity = 0 }, 1600)
   }
 
-  el.querySelector('.back').onclick = () => go(`#/detail/${id}`)
-  const prev = el.querySelector('.prev')
-  const next = el.querySelector('.next')
-  prev.disabled = ep <= 0
-  next.disabled = ep >= src.episodes.length - 1
-  prev.style.opacity = prev.disabled ? 0.35 : 1
-  next.style.opacity = next.disabled ? 0.35 : 1
   const goEp = (i) => { if (i >= 0 && i < src.episodes.length) go(`#/play/${id}/${source}/${i}`) }
-  prev.onclick = () => goEp(ep - 1)
-  next.onclick = () => goEp(ep + 1)
+  $('.back').onclick = () => go(`#/detail/${id}`)
+  $('.back-in').onclick = () => { if (document.fullscreenElement) document.exitFullscreen(); go(`#/detail/${id}`) }
+  if (multi) {
+    const p = $('.c-prev'), n = $('.c-next')
+    p.disabled = ep <= 0
+    n.disabled = ep >= src.episodes.length - 1
+    p.onclick = () => goEp(ep - 1)
+    n.onclick = () => goEp(ep + 1)
+  }
 
-  const speed = el.querySelector('.speed')
-  speed.style.cssText = 'background:rgba(255,255,255,.08);color:#fff;border:none;border-radius:18px;padding:7px 10px;font:inherit'
-  const savedSpeed = Number(localStorage.getItem('speed')) || 1
-  ;[0.5, 0.75, 1, 1.25, 1.5, 2].forEach((s) => {
-    const o = h(`<option value="${s}" style="background:#1c1c24">${s}x</option>`)
-    if (s === savedSpeed) o.selected = true
-    speed.appendChild(o)
-  })
-  speed.onchange = () => { video.playbackRate = Number(speed.value); localStorage.setItem('speed', speed.value) }
-
-  const list = el.querySelector('.player-side .episodes')
-  src.episodes.forEach((x, i) => {
-    const b = h(`<button title="${esc(x.name)}">${esc(x.name)}</button>`)
-    if (i === ep) b.classList.add('on')
-    b.onclick = () => goEp(i)
-    list.appendChild(b)
-  })
+  // 選集：右邊欄和影片上的面板各一份
+  for (const box of el.querySelectorAll('.episodes')) {
+    src.episodes.forEach((x, i) => {
+      const b = h(`<button title="${esc(x.name)}">${esc(x.name)}</button>`)
+      if (i === ep) b.classList.add('on')
+      b.onclick = () => goEp(i)
+      box.appendChild(b)
+    })
+  }
   view.replaceChildren(el)
-  list.querySelector('.on')?.scrollIntoView({ block: 'center' })
+  $('.player-side .episodes .on')?.scrollIntoView({ block: 'center' })
 
-  // 播放：Chromium 不支援 HLS，用 hls.js
+  // ---------- 播放：mp4 直接播，m3u8 用 hls.js（Chromium 不支援 HLS） ----------
   let hls = null
   const start = store.pos(id, source, ep)
   if (!/\.m3u8(\?|$)/i.test(e.url)) {
@@ -757,6 +781,8 @@ async function pagePlay(id, source, ep) {
   } else {
     video.src = e.url
   }
+  const savedSpeed = Number(localStorage.getItem('speed')) || 1
+  video.volume = Math.min(1, Math.max(0, Number(localStorage.getItem('volume') ?? 1)))
   video.addEventListener('loadedmetadata', () => {
     video.playbackRate = savedSpeed
     if (start > 0 && start < video.duration - 5) {
@@ -765,17 +791,153 @@ async function pagePlay(id, source, ep) {
     }
   }, { once: true })
 
-  // 彈幕
-  const dm = danmakuLayer(el.querySelector('canvas.danmaku'), video)
+  // ---------- 控制列 ----------
+  const togglePlay = () => { video.paused || video.ended ? video.play() : video.pause() }
+  const seekBy = (sec) => {
+    if (!video.duration) return
+    video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + sec))
+    showToast(sec > 0 ? `快進 ${sec} 秒` : `快退 ${-sec} 秒`)
+  }
+  const setVolume = (v) => {
+    video.volume = Math.max(0, Math.min(1, v))
+    video.muted = false
+    localStorage.setItem('volume', String(video.volume))
+  }
+
+  const playBtn = $('.c-play')
+  const timeEl = $('.c-time')
+  const seek = $('.seek')
+  const vol = $('.c-vol')
+  const muteBtn = $('.c-mute')
+  const drawState = () => {
+    playBtn.textContent = video.paused || video.ended ? '▶' : '❚❚'
+    const dur = video.duration || 0
+    const t = video.currentTime || 0
+    timeEl.textContent = `${fmt(t)} / ${dur ? fmt(dur) : '--:--'}`
+    const pct = dur ? (t / dur) * 100 : 0
+    $('.seek-play').style.width = pct + '%'
+    $('.seek-knob').style.left = pct + '%'
+    let buf = 0
+    for (let i = 0; i < video.buffered.length; i++) if (video.buffered.start(i) <= t + 1) buf = Math.max(buf, video.buffered.end(i))
+    $('.seek-buf').style.width = (dur ? (buf / dur) * 100 : 0) + '%'
+    vol.value = video.muted ? 0 : video.volume
+    muteBtn.textContent = video.muted || video.volume === 0 ? '🔇' : '🔊'
+  }
+  ;['timeupdate', 'play', 'pause', 'progress', 'durationchange', 'volumechange', 'ended'].forEach((ev) => video.addEventListener(ev, drawState))
+
+  playBtn.onclick = togglePlay
+  vol.oninput = () => setVolume(Number(vol.value))
+  muteBtn.onclick = () => { video.muted = !video.muted }
+
+  // 進度條：點擊或拖曳跳轉，滑過顯示時間
+  const seekRatio = (ev) => {
+    const r = seek.getBoundingClientRect()
+    return Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width))
+  }
+  seek.addEventListener('pointerdown', (ev) => {
+    if (!video.duration) return
+    seek.setPointerCapture(ev.pointerId)
+    video.currentTime = seekRatio(ev) * video.duration
+    const move = (m) => { video.currentTime = seekRatio(m) * video.duration }
+    const up = () => { seek.removeEventListener('pointermove', move); seek.removeEventListener('pointerup', up) }
+    seek.addEventListener('pointermove', move)
+    seek.addEventListener('pointerup', up)
+  })
+  seek.addEventListener('pointermove', (ev) => {
+    if (!video.duration) return
+    const tip = $('.seek-tip')
+    tip.textContent = fmt(seekRatio(ev) * video.duration)
+    tip.style.left = seekRatio(ev) * 100 + '%'
+  })
+
+  // 面板：彈幕設定、選集、倍速，同時只開一個
+  const panels = { dm: $('.dm-panel'), ep: $('.ep-panel'), speed: $('.speed-panel') }
+  const openPanel = (name) => {
+    for (const [k, p] of Object.entries(panels)) p.classList.toggle('open', k === name && !p.classList.contains('open'))
+    if (name === 'ep') panels.ep.querySelector('.on')?.scrollIntoView({ block: 'center' })
+    showCtrl()
+  }
+  const anyPanel = () => Object.values(panels).some((p) => p.classList.contains('open'))
+  el.querySelectorAll('.panel-close').forEach((b) => { b.onclick = () => openPanel(null) })
+  $('.c-dmset').onclick = () => openPanel('dm')
+  $('.c-speed').onclick = () => openPanel('speed')
+  if (multi) $('.c-eps').onclick = () => openPanel('ep')
+
+  const speedBtn = $('.c-speed')
+  const speedOpts = $('.speed-opts')
+  const drawSpeed = () => {
+    speedBtn.textContent = `${video.playbackRate}x`
+    speedOpts.querySelectorAll('button').forEach((b) => b.classList.toggle('on', Number(b.dataset.v) === video.playbackRate))
+  }
+  ;[0.5, 0.75, 1, 1.25, 1.5, 2].forEach((v) => {
+    const b = h(`<button data-v="${v}">${v}x</button>`)
+    b.onclick = () => { video.playbackRate = v; localStorage.setItem('speed', String(v)); drawSpeed() }
+    speedOpts.appendChild(b)
+  })
+  video.addEventListener('ratechange', drawSpeed)
+
+  // 控制列自動隱藏：滑鼠不動 3 秒、正在播放、沒開面板時隱藏（滑鼠游標也一起藏）
+  let hideTimer
+  let overBar = false
+  const showCtrl = () => {
+    wrap.classList.add('show')
+    clearTimeout(hideTimer)
+    hideTimer = setTimeout(() => {
+      if (!video.paused && !anyPanel() && !overBar) wrap.classList.remove('show')
+    }, 3000)
+  }
+  wrap.addEventListener('mousemove', showCtrl)
+  $('.ctrl-bottom').addEventListener('mouseenter', () => { overBar = true })
+  $('.ctrl-bottom').addEventListener('mouseleave', () => { overBar = false; showCtrl() })
+  wrap.addEventListener('mouseleave', () => { if (!video.paused && !anyPanel()) wrap.classList.remove('show') })
+  video.addEventListener('pause', showCtrl)
+  video.addEventListener('play', showCtrl)
+  showCtrl()
+
+  // 點影片：關掉面板或暫停／播放；雙擊：全螢幕
+  const clickArea = $('.ctrl-click')
+  let clickTimer = null
+  clickArea.addEventListener('click', () => {
+    if (anyPanel()) { openPanel(null); return }
+    clearTimeout(clickTimer)
+    clickTimer = setTimeout(togglePlay, 220) // 等一下確定不是雙擊
+  })
+  clickArea.addEventListener('dblclick', (ev) => {
+    ev.preventDefault()
+    clearTimeout(clickTimer)
+    toggleFs()
+  })
+
+  // 全螢幕放大整個 video-wrap（影片＋彈幕＋控制列）
+  const toggleFs = () => {
+    if (document.fullscreenElement) document.exitFullscreen()
+    else wrap.requestFullscreen().catch(() => {})
+  }
+  $('.c-fs').onclick = toggleFs
+  const onFsChange = () => {
+    $('.c-fs').textContent = document.fullscreenElement ? '⛶ 離開' : '⛶'
+    showCtrl()
+  }
+  document.addEventListener('fullscreenchange', onFsChange)
+
+  // ---------- 彈幕 ----------
+  const dm = danmakuLayer($('canvas.danmaku'), video)
   const offsetKey = `dm_offset_${id}`
   dm.update('offset', Number(localStorage.getItem(offsetKey)) || 0)
   const fmtOffset = (v) => (v === 0 ? '不調整' : v > 0 ? `延後 ${v.toFixed(1)} 秒` : `提前 ${(-v).toFixed(1)} 秒`)
-  const dmToggle = el.querySelector('.dm-toggle')
-  const dmCount = el.querySelector('.dm-count')
+  const optGroups = [
+    ['.dm-size', 'size', [[0.75, '小'], [1, '中'], [1.25, '大'], [1.5, '特大']]],
+    ['.dm-alpha', 'alpha', [[1, '100%'], [0.85, '85%'], [0.7, '70%'], [0.5, '50%'], [0.3, '30%']]],
+    ['.dm-area', 'area', [[0.25, '1/4'], [0.5, '半屏'], [0.75, '3/4'], [1, '全屏']]],
+  ]
   const drawDm = () => {
-    dmToggle.textContent = dm.st.on ? '彈幕：開' : '彈幕：關'
-    dmToggle.classList.toggle('on', dm.st.on)
-    el.querySelector('.dm-offset').textContent = fmtOffset(dm.st.offset)
+    $('.c-dm').classList.toggle('on', dm.st.on)
+    $('.c-dm').textContent = dm.st.on ? '彈' : '彈̸'
+    $('.dm-offset').textContent = fmtOffset(dm.st.offset)
+    $('.dm-on').querySelectorAll('button').forEach((b) => b.classList.toggle('on', (b.dataset.v === '1') === dm.st.on))
+    for (const [cls, key] of optGroups) {
+      $(cls).querySelectorAll('button').forEach((b) => b.classList.toggle('on', Math.abs(Number(b.dataset.v) - dm.st[key]) < 0.01))
+    }
   }
   const toggleDm = () => { dm.update('on', !dm.st.on); drawDm(); showToast(dm.st.on ? '彈幕已開啟' : '彈幕已關閉') }
   // 正數＝彈幕延後出現；這部作品的每一集都套用
@@ -786,24 +948,27 @@ async function pagePlay(id, source, ep) {
     drawDm()
     showToast(`彈幕${fmtOffset(v)}`)
   }
-  dmToggle.onclick = toggleDm
-  el.querySelector('.dm-minus').onclick = () => setOffset(dm.st.offset - 0.5)
-  el.querySelector('.dm-plus').onclick = () => setOffset(dm.st.offset + 0.5)
-  el.querySelector('.dm-zero').onclick = () => setOffset(0)
-  const fillSelect = (cls, key, opts) => {
-    const sel = el.querySelector(cls)
-    opts.forEach(([v, t]) => {
-      const o = h(`<option value="${v}">${t}</option>`)
-      if (Math.abs(v - dm.st[key]) < 0.01) o.selected = true
-      sel.appendChild(o)
-    })
-    sel.onchange = () => dm.update(key, Number(sel.value))
+  ;[['1', '開'], ['0', '關']].forEach(([v, t]) => {
+    const b = h(`<button data-v="${v}">${t}</button>`)
+    b.onclick = () => { if ((v === '1') !== dm.st.on) toggleDm() }
+    $('.dm-on').appendChild(b)
+  })
+  for (const [cls, key, opts] of optGroups) {
+    for (const [v, t] of opts) {
+      const b = h(`<button data-v="${v}">${t}</button>`)
+      b.onclick = () => { dm.update(key, v); drawDm() }
+      $(cls).appendChild(b)
+    }
   }
-  fillSelect('.dm-size', 'size', [[0.75, '小'], [1, '中'], [1.25, '大'], [1.5, '特大']])
-  fillSelect('.dm-alpha', 'alpha', [[1, '100%'], [0.85, '85%'], [0.7, '70%'], [0.5, '50%'], [0.3, '30%']])
-  fillSelect('.dm-area', 'area', [[0.25, '1/4'], [0.5, '半屏'], [0.75, '3/4'], [1, '全屏']])
+  $('.c-dm').onclick = toggleDm
+  $('.dm-minus').onclick = () => setOffset(dm.st.offset - 0.5)
+  $('.dm-plus').onclick = () => setOffset(dm.st.offset + 0.5)
+  $('.dm-zero').onclick = () => setOffset(0)
   drawDm()
-  dmCount.textContent = '彈幕載入中…'
+  drawSpeed()
+  drawState()
+  const dmCount = $('.dm-count')
+  dmCount.textContent = '載入中…'
   loadDanmaku(e.url).then((items) => {
     if (route.token !== token) return
     dm.set(items)
@@ -824,47 +989,32 @@ async function pagePlay(id, source, ep) {
   })
 
   const onKey = (ev) => {
-    if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'SELECT') return
+    if (ev.target.tagName === 'INPUT' && ev.target.type !== 'range') return
+    if (ev.target.tagName === 'SELECT') return
     switch (ev.key) {
-      case ' ': case 'k': video.paused ? video.play() : video.pause(); break
-      case 'ArrowLeft': video.currentTime = Math.max(0, video.currentTime - 10); showToast('快退 10 秒'); break
-      case 'ArrowRight': video.currentTime = Math.min(video.duration || 0, video.currentTime + 10); showToast('快進 10 秒'); break
-      case 'ArrowUp': video.volume = Math.min(1, video.volume + 0.1); showToast(`音量 ${Math.round(video.volume * 100)}%`); break
-      case 'ArrowDown': video.volume = Math.max(0, video.volume - 0.1); showToast(`音量 ${Math.round(video.volume * 100)}%`); break
+      case ' ': case 'k': togglePlay(); break
+      case 'ArrowLeft': seekBy(-10); break
+      case 'ArrowRight': seekBy(10); break
+      case 'ArrowUp': setVolume(video.volume + 0.1); showToast(`音量 ${Math.round(video.volume * 100)}%`); break
+      case 'ArrowDown': setVolume(video.volume - 0.1); showToast(`音量 ${Math.round(video.volume * 100)}%`); break
       case 'f': case 'F': toggleFs(); break
       case 'n': case 'N': goEp(ep + 1); break
       case 'p': case 'P': goEp(ep - 1); break
       case 'd': case 'D': toggleDm(); break
       case '[': setOffset(dm.st.offset - 0.5); break
       case ']': setOffset(dm.st.offset + 0.5); break
+      case 'Escape': if (anyPanel()) openPanel(null); else return; break
       default: return
     }
     ev.preventDefault()
+    showCtrl()
   }
   document.addEventListener('keydown', onKey)
-  // 全螢幕一定要放大「影片＋彈幕」外框；只放大 <video> 的話彈幕層會被蓋住看不到。
-  // 所以關掉原生控制列的全螢幕按鈕，改用自己的按鈕、F 鍵、雙擊影片
-  const wrap = el.querySelector('.video-wrap')
-  const toggleFs = () => {
-    if (document.fullscreenElement) document.exitFullscreen()
-    else wrap.requestFullscreen().catch(() => {})
-  }
-  el.querySelector('.fs').onclick = toggleFs
-  video.addEventListener('dblclick', (ev) => {
-    ev.preventDefault()
-    toggleFs()
-  })
-  // 保險：萬一還是只有 <video> 進入全螢幕，換成整個外框
-  const onFsChange = () => {
-    if (document.fullscreenElement === video) {
-      document.exitFullscreen().then(() => wrap.requestFullscreen()).catch(() => {})
-    }
-  }
-  document.addEventListener('fullscreenchange', onFsChange)
 
   route.cleanup = () => {
     save()
     clearInterval(timer)
+    clearTimeout(hideTimer)
     document.removeEventListener('keydown', onKey)
     document.removeEventListener('fullscreenchange', onFsChange)
     if (document.fullscreenElement) document.exitFullscreen()

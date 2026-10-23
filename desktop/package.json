@@ -7,7 +7,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "pack": "electron-packager . AniPlay --platform=win32 --arch=x64 --out=dist --overwrite --asar --icon=src/icon.ico --ignore=^/dist"
+    "pack": "node pack.js"
   },
   "dependencies": {
     "hls.js": "1.6.13"
