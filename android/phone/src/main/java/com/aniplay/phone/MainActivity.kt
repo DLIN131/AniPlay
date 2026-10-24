@@ -55,11 +55,13 @@ enum class Tab(val label: String, val icon: ImageVector) {
 sealed interface Route {
     data class Detail(val anime: Anime) : Route
     data class Listing(val title: String, val query: Query) : Route
+    data object Changelog : Route
 }
 
 class Nav(
     val openAnime: (Anime) -> Unit,
     val openListing: (String, Query) -> Unit,
+    val openChangelog: () -> Unit,
     val back: () -> Unit,
 )
 
@@ -73,6 +75,7 @@ fun AppRoot() {
         Nav(
             openAnime = { stack.add(Route.Detail(it)) },
             openListing = { t, q -> stack.add(Route.Listing(t, q)) },
+            openChangelog = { stack.add(Route.Changelog) },
             back = { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex) },
         )
     }
@@ -81,11 +84,19 @@ fun AppRoot() {
 
     // 開啟時檢查 GitHub 有沒有新版，由使用者決定要不要更新（debug 版的 versionCode 固定是 1，不自動檢查）
     LaunchedEffect(Unit) {
+        // 剛更新完：先顯示這次更新了什麼
+        Updater.checkWhatsNew()
         if (!Updater.isDebugBuild) {
             runCatching { Updater.check() }.getOrNull()
                 ?.takeIf { it.versionCode != Prefs.skippedVersion }
                 ?.let { Updater.pending = it }
         }
+    }
+    Updater.whatsNew?.let { note ->
+        WhatsNewDialog(note, onDismiss = { Updater.whatsNew = null }, onMore = {
+            Updater.whatsNew = null
+            nav.openChangelog()
+        })
     }
     Updater.pending?.let { release ->
         UpdateDialog(
@@ -138,6 +149,7 @@ fun AppRoot() {
                     when (top) {
                         is Route.Detail -> DetailScreen(top.anime)
                         is Route.Listing -> ListingScreen(top.title, top.query)
+                        Route.Changelog -> ChangelogScreen()
                     }
                 }
             }

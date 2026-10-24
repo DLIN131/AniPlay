@@ -192,3 +192,30 @@ object Tags {
         (now downTo 2000).map { it.toString() }
     }
 }
+
+/** 更新紀錄（GitHub Releases 的說明） */
+class ChangelogViewModel : ViewModel() {
+    var notes by mutableStateOf<List<com.aniplay.core.util.Updater.Note>>(emptyList())
+        private set
+    var loading by mutableStateOf(false)
+        private set
+    var error by mutableStateOf<String?>(null)
+        private set
+
+    fun load() {
+        if (loading) return
+        loading = true
+        error = null
+        viewModelScope.launch {
+            try {
+                notes = com.aniplay.core.util.Updater.fetchChangelog()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.friendly()
+            } finally {
+                loading = false
+            }
+        }
+    }
+}

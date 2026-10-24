@@ -48,6 +48,11 @@ object Prefs {
     fun setDanmakuOffset(animeId: Int, ms: Long) =
         sp.edit().apply { if (ms != 0L) putLong("danmaku_offset_$animeId", ms) else remove("danmaku_offset_$animeId") }.apply()
 
+    /** 上次開啟時的 versionCode，用來判斷「剛更新完」要顯示更新內容 */
+    var lastSeenVersion: Int
+        get() = sp.getInt("last_seen_version", 0)
+        set(value) = sp.edit().putInt("last_seen_version", value).apply()
+
     /** 使用者選「略過這個版本」的 versionCode，自動檢查時不再提示這一版 */
     var skippedVersion: Int
         get() = sp.getInt("skipped_version", 0)

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
@@ -75,6 +76,7 @@ enum class Tab(val label: String, val icon: ImageVector) {
     Favorites("收藏", Icons.Filled.Favorite),
     WatchLater("待看清單", Icons.Filled.Add),
     History("觀看紀錄", Icons.Filled.Refresh),
+    Changelog("更新紀錄", Icons.Filled.Info),
 }
 
 sealed interface Route {
@@ -124,11 +126,16 @@ fun AppRoot() {
 
     // 開啟時檢查 GitHub 有沒有新版，由使用者決定要不要更新（debug 版的 versionCode 固定是 1，不自動檢查）
     LaunchedEffect(Unit) {
+        // 剛更新完：先顯示這次更新了什麼
+        Updater.checkWhatsNew()
         if (!Updater.isDebugBuild) {
             runCatching { Updater.check() }.getOrNull()
                 ?.takeIf { it.versionCode != Prefs.skippedVersion }
                 ?.let { Updater.pending = it }
         }
+    }
+    Updater.whatsNew?.let { note ->
+        WhatsNewDialog(note, onDismiss = { Updater.whatsNew = null })
     }
     Updater.pending?.let { release ->
         UpdateDialog(
@@ -208,6 +215,7 @@ fun HomeScaffold(tab: Tab, onTab: (Tab) -> Unit, focusDrawer: Boolean, onFocused
                 Tab.Favorites -> LocalListScreen(LocalList.Favorites)
                 Tab.WatchLater -> LocalListScreen(LocalList.WatchLater)
                 Tab.History -> LocalListScreen(LocalList.History)
+                Tab.Changelog -> ChangelogScreen()
             }
         }
     }

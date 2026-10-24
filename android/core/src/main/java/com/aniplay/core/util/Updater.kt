@@ -27,8 +27,15 @@ import java.util.concurrent.TimeUnit
  */
 object Updater {
     private const val LATEST_API = "https://api.github.com/repos/DLIN131/AniPlay/releases/latest"
+    private const val RELEASES_API = "https://api.github.com/repos/DLIN131/AniPlay/releases?per_page=50"
 
     data class Release(val versionCode: Int, val name: String, val notes: String, val apkUrl: String)
+
+    /** 更新紀錄的一筆（一個版本） */
+    data class Note(val versionCode: Int, val version: String, val date: String, val notes: String)
+
+    /** 剛更新完第一次開啟時設定，主畫面會跳出「這次更新了什麼」 */
+    var whatsNew by mutableStateOf<Note?>(null)
 
     /** 有新版本時設定，主畫面會跳出更新視窗 */
     var pending by mutableStateOf<Release?>(null)
@@ -72,6 +79,34 @@ object Updater {
             }
             url?.let { Release(code, o.optString("name").ifEmpty { tag }, cleanNotes(o.optString("body")), it) }
         }
+    }
+
+    /** 所有版本的更新內容，新的在前面（就是每個 GitHub Release 的說明） */
+    suspend fun fetchChangelog(): List<Note> = withContext(Dispatchers.IO) {
+        val req = Request.Builder().url(RELEASES_API).header("Accept", "application/vnd.github+json").build()
+        client.newCall(req).execute().use { r ->
+            if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
+            val arr = org.json.JSONArray(r.body!!.string())
+            List(arr.length()) { arr.getJSONObject(it) }.mapNotNull { o ->
+                val tag = o.optString("tag_name")
+                val code = tag.substringAfterLast('.').toIntOrNull() ?: return@mapNotNull null
+                Note(code, tag, o.optString("published_at").take(10), cleanNotes(o.optString("body")))
+            }.sortedByDescending { it.versionCode }
+        }
+    }
+
+    /**
+     * 開啟時呼叫：版本比上次開啟時新，就把這個版本的更新內容放進 [whatsNew]。
+     * 第一次安裝不顯示（沒有「上次」可以比較）。
+     */
+    suspend fun checkWhatsNew() {
+        if (isDebugBuild) return
+        val last = com.aniplay.core.Prefs.lastSeenVersion
+        val current = currentVersionCode
+        if (last == current) return
+        com.aniplay.core.Prefs.lastSeenVersion = current
+        if (last == 0) return
+        whatsNew = runCatching { fetchChangelog() }.getOrNull()?.firstOrNull { it.versionCode == current }
     }
 
     /** 發布說明裡 `---` 以下是固定的下載資訊，Co-Authored-By 也不用給使用者看 */

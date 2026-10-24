@@ -427,7 +427,7 @@ function render() {
   const parts = path.split('/').filter(Boolean)
   const params = new URLSearchParams(qs || '')
   const tab = parts[0] || 'home'
-  document.querySelectorAll('.sidebar nav a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab))
+  document.querySelectorAll('.sidebar a[data-tab]').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab))
   view.innerHTML = ''
   switch (tab) {
     case 'browse': return pageBrowse()
@@ -436,6 +436,7 @@ function render() {
     case 'favorites': return pageLocal('favorites')
     case 'later': return pageLocal('later')
     case 'history': return pageLocal('history')
+    case 'changelog': return pageChangelog()
     case 'list': return pageList(params.get('title') || '', JSON.parse(params.get('q') || '{}'))
     case 'detail': return pageDetail(Number(parts[1]))
     case 'play': return pagePlay(Number(parts[1]), Number(parts[2]) || 0, Number(parts[3]) || 0)
@@ -1078,6 +1079,71 @@ function fmt(sec) {
 
 // ================= 更新 =================
 
+const RELEASES_API = 'https://api.github.com/repos/DLIN131/AniPlay/releases'
+
+/** 發布說明裡 --- 以下是固定的下載資訊，Co-Authored-By 也不用給使用者看 */
+const cleanNotes = (body) => String(body || '').split('\n---')[0].split('\n').filter((l) => !l.startsWith('Co-Authored-By')).join('\n').trim()
+
+/** 所有版本的更新內容，新的在前面（就是每個 GitHub Release 的說明） */
+async function fetchChangelog() {
+  const res = await fetch(`${RELEASES_API}?per_page=50`, { headers: { Accept: 'application/vnd.github+json' } })
+  if (!res.ok) throw new Error(`無法取得更新紀錄（HTTP ${res.status}）`)
+  return (await res.json()).map((r) => ({
+    code: Number(String(r.tag_name || '').split('.').pop()) || 0,
+    version: r.tag_name || '',
+    date: String(r.published_at || '').slice(0, 10),
+    notes: cleanNotes(r.body),
+  })).filter((n) => n.code).sort((a, b) => b.code - a.code)
+}
+
+async function pageChangelog() {
+  const token = route.token
+  const current = Number(window.APP_VERSION) || 0
+  view.innerHTML = `<h1>更新紀錄</h1><div class="muted" style="margin:-4px 0 14px">目前版本 ${current ? 'v1.0.' + current : '開發版'}</div>` + loading()
+  try {
+    const list = await fetchChangelog()
+    if (route.token !== token) return
+    view.querySelector('.center')?.remove()
+    for (const n of list) {
+      const el = h(`<div class="note-card">
+        <div class="note-head"><b>${esc(n.version)}</b>${n.code === current ? '<span class="note-current">目前版本</span>' : ''}<span class="muted">${esc(n.date)}</span></div>
+        <div class="note-body"></div>
+      </div>`)
+      el.querySelector('.note-body').textContent = n.notes || '（這個版本沒有寫更新說明）'
+      view.appendChild(el)
+    }
+  } catch (e) {
+    if (route.token === token) view.replaceChildren(errorBox(e.message, render))
+  }
+}
+
+/** 剛更新完第一次開啟：顯示這次更新了什麼。第一次安裝不顯示 */
+async function checkWhatsNew() {
+  const current = Number(window.APP_VERSION) || 0
+  if (!current) return
+  const last = Number(localStorage.getItem('last_seen_version')) || 0
+  if (last === current) return
+  localStorage.setItem('last_seen_version', String(current))
+  if (!last) return
+  try {
+    const note = (await fetchChangelog()).find((n) => n.code === current)
+    if (!note) return
+    const dlg = h(`<div class="modal-backdrop"><div class="modal">
+      <h2 style="margin:0 0 4px">已更新到 ${esc(note.version)}</h2>
+      <div class="muted" style="margin-bottom:12px">這次更新了什麼</div>
+      <div class="note-body"></div>
+      <div class="modal-actions"><button class="more">所有更新紀錄</button><button class="primary ok">知道了</button></div>
+    </div></div>`)
+    dlg.querySelector('.note-body').textContent = note.notes || '（這個版本沒有寫更新說明）'
+    const close = () => dlg.remove()
+    dlg.querySelector('.ok').onclick = close
+    dlg.querySelector('.more').onclick = () => { close(); go('#/changelog') }
+    dlg.onclick = (e) => { if (e.target === dlg) close() }
+    document.body.appendChild(dlg)
+  } catch {}
+}
+checkWhatsNew()
+
 // version.js 由 CI 寫入（APP_VERSION = run_number），本機開發是 0，不檢查
 async function checkUpdate() {
   const current = Number(window.APP_VERSION) || 0
@@ -1091,8 +1157,7 @@ async function checkUpdate() {
     const code = Number(String(r.tag_name || '').split('.').pop()) || 0
     const asset = (r.assets || []).find((a) => a.name === 'AniPlay-Windows.zip')
     if (code <= current || !asset || Number(localStorage.getItem('skipped_version')) === code) return
-    // 發布說明裡 --- 以下是固定的下載資訊，Co-Authored-By 也不用給使用者看
-    const notes = String(r.body || '').split('\n---')[0].split('\n').filter((l) => !l.startsWith('Co-Authored-By')).join('\n').trim()
+    const notes = cleanNotes(r.body)
     const bar = h(`<div class="update-bar">
       <div><b>發現新版本 v1.0.${code}</b>（目前 v1.0.${current}）<div class="notes"></div><div class="status"></div></div>
       <button class="primary">立即更新</button><button class="skip">略過這個版本</button><button class="later">稍後</button>

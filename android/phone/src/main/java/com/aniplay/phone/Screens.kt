@@ -383,6 +383,8 @@ fun MineScreen() {
             if (page == 2 && Store.history.isNotEmpty()) {
                 TextButton(onClick = { confirmClear = true }) { Text("清除紀錄", color = Gray) }
             }
+            val nav = LocalNav.current
+            TextButton(onClick = nav.openChangelog) { Text("更新紀錄", color = Gray) }
             TextButton(
                 onClick = {
                     if (!checking) {
