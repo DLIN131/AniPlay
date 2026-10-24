@@ -33,7 +33,10 @@ function img(p) {
 }
 
 // 有些欄位會是數字（例如時間表的 vod_time），一律轉成字串
-const str = (v) => (v == null ? '' : String(v)).trim()
+// 網站有些文字是 HTML 跳脫過的（例如標題裡的 &amp;），還原成一般字元
+const unescapeHtml = (s) => (s.includes('&') ? s.replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&') : s)
+const str = (v) => unescapeHtml((v == null ? '' : String(v)).trim())
 const anime = (o) => ({
   id: o.vod_id,
   name: str(o.vod_name),
@@ -58,7 +61,7 @@ function toSimplified(s) {
 async function list(q, offset, limit = PAGE) {
   const info = await api('Vod/get_list', {
     type_id: q.typeId, offset, limit, orderby: q.orderby || 'pubdate',
-    vod_name: toSimplified(q.name), vod_class: q.cls, vod_year: q.year, vod_version: q.version,
+    vod_name: toSimplified(q.name), vod_class: q.cls, vod_year: q.year, vod_area: q.month, vod_version: q.version,
   })
   return { items: (info.rows || []).map(anime), total: info.total || 0 }
 }
@@ -87,11 +90,11 @@ async function detail(id) {
   const o = await api('Vod/get_detail', { vod_id: id })
   const d = {
     anime: anime(o),
-    sub: o.vod_sub || '',
+    sub: str(o.vod_sub),
     blurb: stripHtml(o.vod_content) || o.vod_blurb || '',
     classes: (o.vod_class || '').split(/[,，/]/).map((s) => s.trim()).filter(Boolean),
     area: o.vod_area || '', lang: o.vod_lang || '', version: o.vod_version || '',
-    director: o.vod_director || '', actors: o.vod_actor || '', weekday: o.vod_weekday || '',
+    director: str(o.vod_director), actors: str(o.vod_actor), weekday: str(o.vod_weekday),
     sources: parseSources(o.vod_play_from, o.vod_play_url),
   }
   detailCache.set(id, d)
@@ -514,7 +517,9 @@ async function pageHome() {
 }
 
 let tagOptions = null
-const browseState = { typeId: 2, orderby: 'pubdate', cls: '', year: '', version: '' }
+const browseState = { typeId: 2, orderby: 'pubdate', cls: '', year: '', month: '', version: '' }
+// 網站以季度分新番（存在 vod_area 欄位）
+const MONTHS = ['一月', '四月', '七月', '十月']
 
 async function pageBrowse() {
   const token = route.token
@@ -533,6 +538,7 @@ async function pageBrowse() {
       view.appendChild(chips('版本', [['', '全部'], ...tagOptions.vod_version.map((c) => [c, c])], browseState.version, set('version')))
     }
     view.appendChild(chips('年份', years, browseState.year, set('year')))
+    view.appendChild(chips('月份', [['', '全部'], ...MONTHS.map((m) => [m, m])], browseState.month, set('month')))
     view.appendChild(h('<div style="height:10px"></div>'))
     feed(view, { ...browseState })
   }

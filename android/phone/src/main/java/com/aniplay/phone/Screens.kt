@@ -206,8 +206,9 @@ fun BrowseScreen() {
     var order by rememberSaveable { mutableStateOf("pubdate") }
     var cls by rememberSaveable { mutableStateOf("") }
     var year by rememberSaveable { mutableStateOf("") }
+    var month by rememberSaveable { mutableStateOf("") }
     var version by rememberSaveable { mutableStateOf("") }
-    fun query() = Query(typeId = typeId, orderby = order, cls = cls, year = year, version = version)
+    fun query() = Query(typeId = typeId, orderby = order, cls = cls, year = year, month = month, version = version)
     val vm: FeedViewModel = viewModel(key = "browse") { FeedViewModel(query()) }
     fun reload() = vm.refresh(query())
     LaunchedEffect(Unit) { Tags.ensure() }
@@ -226,6 +227,7 @@ fun BrowseScreen() {
                     ChipRow(listOf("" to "全部版本") + tags.versions.map { it to it }, version) { version = it; reload() }
                 }
                 ChipRow(listOf("" to "全部年份") + Tags.years.map { it to it }, year) { year = it; reload() }
+                ChipRow(listOf("" to "全部月份") + Api.months.map { it to it }, month) { month = it; reload() }
                 if (vm.total > 0) Text("共 ${vm.total} 部", fontSize = 12.sp, color = Gray, modifier = Modifier.padding(start = 16.dp, top = 4.dp))
             }
         })

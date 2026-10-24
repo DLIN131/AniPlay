@@ -94,7 +94,8 @@ fun BrowseScreen() {
     var order by rememberSaveable { mutableStateOf("pubdate") }
     var cls by rememberSaveable { mutableStateOf("") }
     var year by rememberSaveable { mutableStateOf("") }
-    fun query() = Query(typeId = typeId, orderby = order, cls = cls, year = year)
+    var month by rememberSaveable { mutableStateOf("") }
+    fun query() = Query(typeId = typeId, orderby = order, cls = cls, year = year, month = month)
     val vm: FeedViewModel = viewModel(key = "browse") { FeedViewModel(query()) }
     fun reload() = vm.refresh(query())
     LaunchedEffect(Unit) { Tags.ensure() }
@@ -109,6 +110,7 @@ fun BrowseScreen() {
             ChipRow(listOf("" to "全部類型") + t.classes.map { it to it }, cls) { cls = it; reload() }
         }
         ChipRow(listOf("" to "全部年份") + Tags.years.map { it to it }, year) { year = it; reload() }
+        ChipRow(listOf("" to "全部月份") + Api.months.map { it to it }, month) { month = it; reload() }
         AnimeGrid(vm, onClick = nav.openAnime)
     }
 }

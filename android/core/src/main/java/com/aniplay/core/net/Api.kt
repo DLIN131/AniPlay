@@ -54,6 +54,8 @@ data class Query(
     val name: String = "",
     val cls: String = "",
     val year: String = "",
+    /** 新番季度月份：一月、四月、七月、十月 */
+    val month: String = "",
     val lang: String = "",
     val version: String = "",
     val state: String = "",
@@ -76,6 +78,9 @@ object Api {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 
     val types = listOf(2 to "日番", 21 to "劇場版", 3 to "美番", 20 to "真人番劇", 24 to "BD副音軌", 26 to "演唱會及其他")
+
+    /** 網站以季度分新番（存在 vod_area 欄位） */
+    val months = listOf("一月", "四月", "七月", "十月")
 
     val orders = listOf(
         "pubdate" to "最新",
@@ -115,7 +120,16 @@ object Api {
         else -> IMG + path.trimStart('/')
     }
 
-    private fun JSONObject.str(key: String) = optString(key).takeUnless { it == "null" }.orEmpty().trim()
+    // 網站有些文字是 HTML 跳脫過的（例如標題裡的 &amp;），還原成一般字元
+    private fun JSONObject.str(key: String) = optString(key).takeUnless { it == "null" }.orEmpty().trim().let(::unescape)
+
+    private fun unescape(s: String) = if ('&' !in s) s else s
+        .replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
 
     private fun parseAnime(o: JSONObject) = Anime(
         id = o.optInt("vod_id"),
@@ -137,6 +151,7 @@ object Api {
             if (q.name.isNotEmpty()) put("vod_name", ChineseConvert.toSimplified(q.name))
             if (q.cls.isNotEmpty()) put("vod_class", q.cls)
             if (q.year.isNotEmpty()) put("vod_year", q.year)
+            if (q.month.isNotEmpty()) put("vod_area", q.month)
             if (q.lang.isNotEmpty()) put("vod_lang", q.lang)
             if (q.version.isNotEmpty()) put("vod_version", q.version)
             if (q.state.isNotEmpty()) put("vod_state", q.state)
