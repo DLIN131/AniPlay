@@ -71,13 +71,27 @@
 6. **hls.js 記憶體**：預設 `backBufferLength` 是無限，長片越看越吃記憶體 → 設 90 秒。
 7. **桌面版 mp4**：有些作品是 mp4，不能丟給 hls.js；網址不是 `.m3u8` 就直接 `video.src`。
 8. **Android**：`DanmakuView` 不能有叫 `enabled` 的屬性（和 `View.setEnabled` 撞 JVM 簽章）→ 叫 `showing`。TV 的 Compose `LazyColumn` 裡要有可聚焦元件方向鍵才捲得動（更新紀錄每筆用 `Card(onClick = {})`）。
-9. **測試桌面打包版**：用 `--remote-debugging-port=9339 --remote-allow-origins=*` 啟動，再用 CDP（WebSocket `Runtime.evaluate`，需要時 `userGesture: true`）操作。視窗被蓋住時 `document.hidden` 為 true，影片不載入、全螢幕卡住。**不要**用 `SetForegroundWindow` 把視窗拉到前面打擾使用者；能用 `show: false` 的小測試就用。
-10. **Android 測試**：使用者不用模擬器，只用 Gradle 編譯；手機／電視上的實際行為都還沒在實機驗證過。
-11. 改檔時用 node 腳本做字串替換要小心：heredoc 裡的 `\\n` 寫進檔案可能變成真的換行；同名欄位（例如 `Anime.year` 和 `Query.year`）會替換到第一個。
+9. **桌面版 UI 測試**：最好的方式是用 `show: false` 的 Electron 小程式載入 `desktop/src/index.html`（掛上 `net-policy.allowCors()`），用 `webContents.executeJavaScript` 跑測試腳本、印出結果——不會跳出視窗打擾使用者，也不受瀏覽器窗格的網路限制。（影片播放、全螢幕需要真的看得到的視窗才測得了。）
+10. **測試桌面打包版**：用 `--remote-debugging-port=9339 --remote-allow-origins=*` 啟動，再用 CDP（WebSocket `Runtime.evaluate`，需要時 `userGesture: true`）操作。視窗被蓋住時 `document.hidden` 為 true，影片不載入、全螢幕卡住。**不要**用 `SetForegroundWindow` 把視窗拉到前面打擾使用者；能用 `show: false` 的小測試就用。
+11. **Android 測試**：使用者不用模擬器，只用 Gradle 編譯；手機／電視上的實際行為都還沒在實機驗證過。
+12. 改檔時用 node 腳本做字串替換要小心：heredoc 裡的 `\\n` 寫進檔案可能變成真的換行；同名欄位（例如 `Anime.year` 和 `Query.year`）會替換到第一個。
 
 ---
 
 ## 3. 改動紀錄（新的在上面）
+
+### v1.0.12（2026-10-28）電腦版：返回、繼續觀看進度、本週停更
+- **改了什麼**（只有電腦版）：
+  1. 點進去的畫面上方有「‹ 返回」（捲動時固定在上面）；滑鼠側鍵、Alt+←、Backspace 也能返回。播放器裡換集不留紀錄，返回直接回到進播放器前那頁。
+  2. 繼續觀看／觀看紀錄顯示「第 03 集 12:34 / 23:40」＋封面底部進度條；首頁「繼續觀看」點了直接從上次位置播放。
+  3. 時間表改名「本季新番時間表」，標出「本週停更」（紅框、紅字、上方列出停更作品、星期按鈕顯示停更數），以及本週已更新／等待更新／已完結／尚未開播。
+- **技術細節**：
+  - `index.html`：`<main id="scroller">` 裡放 `#backbar`（sticky）和 `#view`；捲動相關（無限載入、回到頂端）都改用 `scroller`。
+  - 返回：自己維護 `navStack`（`trackNav()` 在 `render()` 開頭判斷是前進、返回還是 `goReplace()` 取代），`goBack(fallback)` 有上一頁就 `history.back()`。播放器換集用 `location.replace`。
+  - 播放進度改存 `"秒數/片長"`（`pos_<id>_<線路>_<集>`），舊格式只有秒數仍相容；`store.posInfo()`、`watchInfo()`；`card(a, sub, { href, progress, status })`。
+  - 本週停更：網站時間表**沒有停更欄位**，用作品詳情的 `vod_time`（最後更新）/ `vod_time_add` 推算：`lastSlot(週幾)`＝最近一次播出日 00:00；最後更新 ≥ 播出日 −12 小時＝已更新；沒更新且已過 36 小時＝停更；未滿 36 小時＝等待更新。只判斷備註含「更新至」的每週連載（「10月25日／星期日」這類單次特別篇不算）。約 70 部作品的詳情用 6 條並行抓（`pool()`），結果快取 10 分鐘，抓的過程中逐步更新畫面。
+- **修了什麼**：標題裡的數字 HTML 實體（例如 `Let&#039;s Go`）沒有還原；桌面 `unescapeHtml()` 與 Android `Api.unescape()` 都加上 `&#數字;`、`&#x十六進位;`。
+- **測試**：瀏覽器窗格這次連不到 API（Failed to fetch），改用 `show: false` 的 Electron 視窗載入 `src/index.html` 跑腳本（`executeJavaScript`），驗證返回流程、滑鼠側鍵、換集後返回、繼續觀看文字與進度、停更統計（當週：已更新 53、停更 10、等待 4、完結 9、未開播 3）。
 
 ### v1.0.11（2026-10-24）新增更新紀錄
 - **改了什麼**：三版都有「更新紀錄」頁（手機：我的 → 更新紀錄；電視：側邊選單；電腦：側邊欄最下面）；更新後第一次開啟跳出「這次更新了什麼」。

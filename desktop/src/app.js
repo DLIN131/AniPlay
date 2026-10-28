@@ -35,7 +35,10 @@ function img(p) {
 // 有些欄位會是數字（例如時間表的 vod_time），一律轉成字串
 // 網站有些文字是 HTML 跳脫過的（例如標題裡的 &amp;），還原成一般字元
 const unescapeHtml = (s) => (s.includes('&') ? s.replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-  .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&') : s)
+  .replace(/&quot;/g, '"')
+  .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+  .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+  .replace(/&amp;/g, '&') : s)
 const str = (v) => unescapeHtml((v == null ? '' : String(v)).trim())
 const anime = (o) => ({
   id: o.vod_id,
@@ -96,6 +99,9 @@ async function detail(id) {
     area: o.vod_area || '', lang: o.vod_lang || '', version: o.vod_version || '',
     director: str(o.vod_director), actors: str(o.vod_actor), weekday: str(o.vod_weekday),
     sources: parseSources(o.vod_play_from, o.vod_play_url),
+    // 最後更新、上架時間（毫秒），用來判斷本週有沒有停更
+    updatedAt: (Number(o.vod_time) || 0) * 1000,
+    addedAt: (Number(o.vod_time_add) || 0) * 1000,
   }
   detailCache.set(id, d)
   return d
@@ -327,10 +333,16 @@ const store = {
     this.set('history', [])
     Object.keys(localStorage).filter((k) => k.startsWith('pos_')).forEach((k) => localStorage.removeItem(k))
   },
-  pos(id, s, e) { return Number(localStorage.getItem(`pos_${id}_${s}_${e}`)) || 0 },
-  savePos(id, s, e, sec) {
+  // 播放進度存成「秒數/片長」，例如 "754/1420"（舊版只有秒數，一樣讀得到）
+  pos(id, s, e) { return this.posInfo(id, s, e).sec },
+  posInfo(id, s, e) {
+    const [sec, dur] = String(localStorage.getItem(`pos_${id}_${s}_${e}`) || '').split('/').map(Number)
+    return { sec: sec || 0, dur: dur || 0 }
+  },
+  savePos(id, s, e, sec, dur = 0) {
     const k = `pos_${id}_${s}_${e}`
-    try { sec > 0 ? localStorage.setItem(k, String(Math.floor(sec))) : localStorage.removeItem(k) } catch {}
+    const v = dur > 0 ? `${Math.floor(sec)}/${Math.floor(dur)}` : String(Math.floor(sec))
+    try { sec > 0 ? localStorage.setItem(k, v) : localStorage.removeItem(k) } catch {}
   },
   words() { return this.get('search_words', []) },
   addWord(w) { this.set('search_words', [w, ...this.words().filter((x) => x !== w)].slice(0, 20)) },
@@ -349,6 +361,8 @@ store.prunePositions()
 // ================= 畫面工具 =================
 
 const view = document.getElementById('view')
+// 捲動的是外層 main（裡面有返回列和 view）
+const scroller = document.getElementById('scroller')
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild }
 const loading = () => '<div class="center"><div class="spinner"></div></div>'
@@ -359,16 +373,32 @@ function errorBox(msg, retry) {
   return el
 }
 
-function card(a, sub) {
+/**
+ * 作品卡片。opts：
+ * - href：點了去哪（預設作品頁）
+ * - progress：0～1，封面底部顯示觀看進度條
+ * - status：{ cls, text }，封面左上角的狀態標籤（本週停更等）
+ */
+function card(a, sub, opts = {}) {
   const score = a.score && a.score !== '0.0' ? `<span class="score">${esc(a.score)}</span>` : ''
   const badge = a.remarks ? `<div class="badge">${esc(a.remarks)}</div>` : ''
-  const el = h(`<div class="card">
-    <div class="cover"><img loading="lazy" src="${esc(a.cover)}" alt="">${badge}${score}</div>
+  const progress = opts.progress > 0 ? `<div class="progress"><i style="width:${Math.min(100, opts.progress * 100).toFixed(1)}%"></i></div>` : ''
+  const status = opts.status ? `<span class="status ${opts.status.cls}">${esc(opts.status.text)}</span>` : ''
+  const el = h(`<div class="card${opts.status?.cls === 'st-paused' ? ' paused' : ''}">
+    <div class="cover"><img loading="lazy" src="${esc(a.cover)}" alt="">${badge}${progress}${status}${score}</div>
     <div class="name">${esc(a.name)}</div>
     ${sub ? `<div class="sub">${esc(sub)}</div>` : ''}
   </div>`)
-  el.onclick = () => go(`#/detail/${a.id}`)
+  el.onclick = () => go(opts.href || `#/detail/${a.id}`)
   return el
+}
+
+/** 觀看紀錄的一筆 → 「第 03 集 12:34 / 23:40」和進度（0～1） */
+function watchInfo(x) {
+  const p = store.posInfo(x.anime.id, x.source, x.episode)
+  let text = `第 ${x.episodeName} 集`
+  if (p.sec > 0) text += ` ${fmt(p.sec)}${p.dur ? ` / ${fmt(p.dur)}` : ''}`
+  return { text, progress: p.sec > 0 && p.dur > 0 ? p.sec / p.dur : 0 }
 }
 
 function chips(label, options, selected, onSelect) {
@@ -400,33 +430,85 @@ function feed(container, q) {
       offset += p.items.length
       done = p.items.length < PAGE || offset >= p.total
       foot.innerHTML = offset === 0 ? '<div class="center">這裡什麼都沒有</div>' : done ? '<div class="center muted">沒有更多了</div>' : ''
-      if (!done && view.scrollHeight <= view.clientHeight + 300) more()
+      if (!done && scroller.scrollHeight <= scroller.clientHeight + 300) more()
     } catch (e) {
       foot.replaceChildren(errorBox(e.message, () => { busy = false; more() }))
     } finally {
       busy = false
     }
   }
-  route.onScroll = () => { if (view.scrollTop + view.clientHeight > view.scrollHeight - 600) more() }
+  route.onScroll = () => { if (scroller.scrollTop + scroller.clientHeight > scroller.scrollHeight - 600) more() }
   more()
 }
 
 // ================= 路由 =================
 
 const route = { token: null, onScroll: null, cleanup: null }
-view.addEventListener('scroll', () => route.onScroll && route.onScroll())
+scroller.addEventListener('scroll', () => route.onScroll && route.onScroll())
 
 function go(hash) { location.hash = hash }
+
+// ---------- 返回 ----------
+// 自己記走過的頁面：hash 路由的 history.back() 本身可以用，但要知道「有沒有上一頁」才能決定顯示返回列
+const navStack = []
+let replacing = false
+
+/** 換掉目前這一頁、不留在返回紀錄裡（例如播放器裡換集） */
+function goReplace(hash) {
+  replacing = true
+  location.replace(hash)
+}
+
+function trackNav() {
+  const cur = location.hash || '#/home'
+  if (replacing) {
+    replacing = false
+    if (navStack.length) navStack[navStack.length - 1] = cur
+    else navStack.push(cur)
+  } else if (navStack.length >= 2 && navStack[navStack.length - 2] === cur) {
+    navStack.pop() // 按了返回（或瀏覽器的上一頁）
+  } else if (navStack[navStack.length - 1] !== cur) {
+    navStack.push(cur)
+  }
+}
+
+const canGoBack = () => navStack.length > 1
+
+/** 返回上一頁；沒有上一頁就去 fallback */
+function goBack(fallback = '#/home') {
+  if (canGoBack()) history.back()
+  else if (location.hash !== fallback) goReplace(fallback)
+}
+
+const backbar = document.getElementById('backbar')
+backbar.querySelector('.back-btn').onclick = () => goBack()
+
+// 滑鼠側鍵（上一頁／下一頁）、Alt+←、Backspace
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 3) { e.preventDefault(); goBack() }
+  else if (e.button === 4) { e.preventDefault(); history.forward() }
+})
+window.addEventListener('keydown', (e) => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && e.target.type !== 'range'
+  if ((e.altKey && e.key === 'ArrowLeft') || (e.key === 'Backspace' && !typing)) {
+    if (document.fullscreenElement) return
+    e.preventDefault()
+    goBack()
+  }
+})
 
 function render() {
   if (route.cleanup) { route.cleanup(); route.cleanup = null }
   route.onScroll = null
   route.token = {}
-  view.scrollTop = 0
+  trackNav()
+  scroller.scrollTop = 0
   const [path, qs] = location.hash.slice(1).split('?')
   const parts = path.split('/').filter(Boolean)
   const params = new URLSearchParams(qs || '')
   const tab = parts[0] || 'home'
+  // 播放器有自己的返回按鈕
+  backbar.classList.toggle('show', canGoBack() && tab !== 'play')
   document.querySelectorAll('.sidebar a[data-tab]').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab))
   view.innerHTML = ''
   switch (tab) {
@@ -501,7 +583,11 @@ async function pageHome() {
     if (hist.length) {
       view.appendChild(h('<h2>繼續觀看</h2>'))
       const row = h('<div class="row"></div>')
-      hist.forEach((x) => row.appendChild(card({ ...x.anime, remarks: '' }, `看到第 ${x.episodeName} 集`)))
+      // 點了直接從上次的位置繼續播
+      hist.forEach((x) => {
+        const w = watchInfo(x)
+        row.appendChild(card({ ...x.anime, remarks: '' }, w.text, { progress: w.progress, href: `#/play/${x.anime.id}/${x.source}/${x.episode}` }))
+      })
       view.appendChild(row)
     }
     for (const [title, q, items] of rows) {
@@ -551,21 +637,113 @@ function pageList(title, q) {
   feed(view, q)
 }
 
+// ---------- 本週停更 ----------
+// 網站時間表沒有「停更」欄位，用作品的「最後更新時間」推算：
+// 這週的播出日（時間表上那一天）過了 36 小時還沒更新，就算本週停更。
+const HOUR = 3600 * 1000
+const DAY = 24 * HOUR
+const PAUSE_AFTER = 36 * HOUR
+const weekStatus = new Map() // vod_id → { cls, text }
+let weekStatusAt = 0
+
+/** 最近一次（今天或之前）的週 w 的 00:00；w：1＝週一 … 7＝週日 */
+function lastSlot(w, now = new Date()) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const todayIdx = (now.getDay() + 6) % 7
+  return today - ((todayIdx - (w - 1) + 7) % 7) * DAY
+}
+
+function statusOf(a, week, d) {
+  if (/完结|完結/.test(a.remarks)) return { cls: 'st-end', text: '已完結' }
+  if (/起\s*$/.test(a.remarks)) return { cls: 'st-upcoming', text: '尚未開播' }
+  // 只有每週連載（「更新至03集 / 23點30分」）才判斷停更；「10月25日／星期日」這類單次播出的特別篇不算
+  if (!/更新至/.test(a.remarks)) return null
+  if (!d || !d.updatedAt) return null
+  const slot = lastSlot(week)
+  // 時間表上的時間常是深夜（例如 00:30 算前一天），更新也可能早半天，往前多算 12 小時
+  if (d.updatedAt >= slot - 12 * HOUR || d.addedAt >= slot - 12 * HOUR) return { cls: 'st-updated', text: '本週已更新' }
+  if (Date.now() - slot < PAUSE_AFTER) return { cls: 'st-waiting', text: '等待更新' }
+  return { cls: 'st-paused', text: '本週停更' }
+}
+
+/** 同時最多 n 個請求 */
+async function pool(items, n, fn) {
+  let i = 0
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (i < items.length) { const x = items[i++]; await fn(x).catch(() => {}) }
+  }))
+}
+
 async function pageWeek() {
   const token = route.token
-  view.innerHTML = '<h1>新番時間表</h1>' + loading()
+  view.innerHTML = '<h1>本季新番時間表</h1>' + loading()
   try {
     const days = await api('App2/weekList')
     if (route.token !== token) return
     const today = (new Date().getDay() + 6) % 7
     let day = today
+    let checking = false
+    let checked = 0
+    const shows = (days || []).flatMap((d) => (d.video || []).map((v) => ({ week: d.week, a: anime(v) })))
+    const ongoing = shows.filter((x) => /更新至/.test(x.a.remarks))
+    const ids = [...new Set(ongoing.map((x) => x.a.id))]
+
     const draw = () => {
-      view.innerHTML = '<h1>新番時間表</h1>'
-      view.appendChild(chips('', WEEK.map((n, i) => [i, i === today ? '今天' : `週${n}`]), day, (v) => { day = Number(v); draw() }))
+      if (route.token !== token) return
+      const y = scroller.scrollTop
+      view.innerHTML = '<h1>本季新番時間表</h1>'
+
+      // 上面列出本週停更的作品，點名字直接跳到作品頁
+      const paused = shows.filter((x) => weekStatus.get(x.a.id)?.cls === 'st-paused')
+      const uniq = [...new Map(paused.map((x) => [x.a.id, x])).values()]
+      const sum = h('<div class="week-summary"></div>')
+      if (checking) sum.appendChild(h(`<span>正在檢查本週更新狀態… ${checked} / ${ids.length}</span>`))
+      else if (uniq.length) {
+        sum.appendChild(h(`<span>本週停更 <span class="paused-count">${uniq.length}</span> 部：</span>`))
+        uniq.forEach((x) => {
+          const n = h(`<span class="paused-name" title="週${WEEK[x.week - 1]}">${esc(x.a.name)}</span>`)
+          n.onclick = () => go(`#/detail/${x.a.id}`)
+          sum.appendChild(n)
+        })
+      } else sum.appendChild(h('<span>本週沒有停更的作品</span>'))
+      view.appendChild(sum)
+
+      // 星期選單：有停更的那天標出數量
+      const pausedByDay = (i) => paused.filter((x) => x.week === i + 1).length
+      view.appendChild(chips('', WEEK.map((n, i) => {
+        const p = pausedByDay(i)
+        return [i, `${i === today ? '今天' : `週${n}`}${p ? `（${p} 停更）` : ''}`]
+      }), day, (v) => { day = Number(v); scroller.scrollTop = 0; draw() }))
+
       const grid = h('<div class="grid" style="margin-top:12px"></div>')
       const d = (days || []).find((x) => x.week === day + 1)
-      ;(d?.video || []).map(anime).forEach((a) => grid.appendChild(card({ ...a, remarks: '' }, a.remarks)))
+      ;(d?.video || []).map(anime).forEach((a) => {
+        const st = weekStatus.get(a.id) || statusOf(a, day + 1, null)
+        grid.appendChild(card({ ...a, remarks: '' }, a.remarks, { status: st }))
+      })
       view.appendChild(grid)
+      scroller.scrollTop = y
+    }
+
+    // 10 分鐘內查過就直接用，不然重新查每部作品的最後更新時間
+    if (Date.now() - weekStatusAt > 10 * 60 * 1000) {
+      weekStatus.clear()
+      checking = true
+      draw()
+      let lastDraw = 0
+      await pool(ids, 6, async (id) => {
+        const dt = await detail(id)
+        for (const x of shows) if (x.a.id === id) {
+          const st = statusOf(x.a, x.week, dt)
+          // 同一部在兩天都有播：任一天停更就算停更
+          if (st && weekStatus.get(id)?.cls !== 'st-paused') weekStatus.set(id, st)
+        }
+        checked++
+        if (Date.now() - lastDraw > 400) { lastDraw = Date.now(); draw() }
+      })
+      for (const x of shows) if (!weekStatus.has(x.a.id)) { const st = statusOf(x.a, x.week, null); if (st) weekStatus.set(x.a.id, st) }
+      weekStatusAt = Date.now()
+      checking = false
     }
     draw()
   } catch (e) {
@@ -611,7 +789,10 @@ function pageLocal(kind) {
   view.appendChild(head)
   const items = kind === 'favorites' ? store.favorites().map((a) => [a, null])
     : kind === 'later' ? store.later().map((a) => [a, null])
-    : store.history().map((x) => [{ ...x.anime, remarks: '' }, `看到第 ${x.episodeName} 集`])
+    : store.history().map((x) => {
+      const w = watchInfo(x)
+      return [{ ...x.anime, remarks: '' }, w.text, { progress: w.progress }]
+    })
   if (kind === 'history' && items.length) {
     const b = h('<button style="margin-left:auto;font-size:13px">清除全部紀錄</button>')
     b.onclick = () => { if (confirm('確定清除所有觀看紀錄和播放進度？')) { store.clearHistory(); render() } }
@@ -622,7 +803,7 @@ function pageLocal(kind) {
     return
   }
   const grid = h('<div class="grid"></div>')
-  items.forEach(([a, sub]) => grid.appendChild(card(a, sub)))
+  items.forEach(([a, sub, opts]) => grid.appendChild(card(a, sub, opts)))
   view.appendChild(grid)
 }
 
@@ -785,9 +966,10 @@ async function pagePlay(id, source, ep) {
     toastTimer = setTimeout(() => { toast.style.opacity = 0 }, 1600)
   }
 
-  const goEp = (i) => { if (i >= 0 && i < src.episodes.length) go(`#/play/${id}/${source}/${i}`) }
-  $('.back').onclick = () => go(`#/detail/${id}`)
-  $('.back-in').onclick = () => { if (document.fullscreenElement) document.exitFullscreen(); go(`#/detail/${id}`) }
+  // 換集用 replace：返回時直接回到進播放器前的那一頁，不會一集一集往回退
+  const goEp = (i) => { if (i >= 0 && i < src.episodes.length) goReplace(`#/play/${id}/${source}/${i}`) }
+  $('.back').onclick = () => goBack(`#/detail/${id}`)
+  $('.back-in').onclick = () => { if (document.fullscreenElement) document.exitFullscreen(); goBack(`#/detail/${id}`) }
   if (multi) {
     const p = $('.c-prev'), n = $('.c-next')
     p.disabled = ep <= 0
@@ -1026,7 +1208,7 @@ async function pagePlay(id, source, ep) {
   const save = () => {
     if (!video.duration) return
     const done = video.duration - video.currentTime < 30
-    store.savePos(id, source, ep, done ? 0 : video.currentTime)
+    store.savePos(id, source, ep, done ? 0 : video.currentTime, video.duration)
   }
   const timer = setInterval(save, 5000)
   video.addEventListener('ended', () => {
