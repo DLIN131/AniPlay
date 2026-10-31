@@ -184,6 +184,7 @@ async function loadDanmaku(playUrl) {
 
 const SCROLL_SEC = 8
 const FIXED_SEC = 4
+const SPRITES_PER_FRAME = 12
 
 /**
  * 彈幕層。每則彈幕的位置都由「影片目前時間 − 彈幕時間」算出來，不用自己的計時器，
@@ -195,9 +196,44 @@ function danmakuLayer(canvas, video) {
     items: [], on: store.get('dm_on', true), size: store.get('dm_size', 1), alpha: store.get('dm_alpha', 0.85),
     area: store.get('dm_area', 0.5), offset: 0,
   }
-  let active = [], lanes = {}, next = 0, lastPos = NaN, raf = 0, W = 0, H = 0
+  let active = [], lanes = {}, next = 0, lastPos = NaN, raf = 0, W = 0, H = 0, dpr = 1
 
   const reset = () => { active = []; lanes = { scroll: [], top: [], bottom: [] }; lastPos = NaN }
+
+  // 平滑時鐘：video.currentTime 是一格一格跳的（不是每一幀都更新），直接拿來算位置彈幕會一頓一頓。
+  // 播放中用系統時間往前推算，再慢慢修正到影片時間；差太多（拖動、卡住緩衝）就直接對齊。
+  let clock = { media: 0, at: 0 }
+  function mediaTime(t) {
+    const vt = video.currentTime
+    const stalled = video.paused || video.seeking || (video.readyState !== undefined && video.readyState < 3)
+    if (stalled || !clock.at) { clock = { media: vt, at: t }; return vt }
+    const predicted = clock.media + ((t - clock.at) / 1000) * (video.playbackRate || 1)
+    if (Math.abs(predicted - vt) > 0.25) { clock = { media: vt, at: t }; return vt }
+    clock = { media: predicted + (vt - predicted) * 0.05, at: t }
+    return clock.media
+  }
+
+  // 每則彈幕出現時先畫好一張小圖（描邊＋填色只畫一次），之後每一幀只貼圖。
+  // 以前每一幀都重畫全部文字的描邊，彈幕一多就超過一幀的時間（實測最密集時平均 23 ms、最慢 138 ms）
+  function sprite(d, w, fs) {
+    const pad = Math.ceil(Math.max(1.5, fs / 12)) + 1
+    const cw = Math.ceil(w) + pad * 2, ch = Math.ceil(fs * 1.25) + pad * 2
+    // 用 OffscreenCanvas 畫完轉成 ImageBitmap：不可變、可以留在 GPU 上，
+    // 貼圖時不用每幀重新上傳（一般的小 canvas 放在 CPU，每次貼都要上傳一次，反而更慢）
+    const c = new OffscreenCanvas(Math.ceil(cw * dpr), Math.ceil(ch * dpr))
+    const g = c.getContext('2d')
+    g.scale(dpr, dpr)
+    g.font = ctx.font
+    g.textBaseline = 'alphabetic'
+    g.lineJoin = 'round'
+    g.lineWidth = Math.max(1.5, fs / 12)
+    g.strokeStyle = 'rgba(0,0,0,0.8)'
+    g.fillStyle = d.color
+    const baseY = pad + fs
+    g.strokeText(d.text, pad, baseY)
+    g.fillText(d.text, pad, baseY)
+    return { img: c.transferToImageBitmap(), cw, ch, pad, baseY }
+  }
   const lowerBound = (t) => {
     let lo = 0, hi = st.items.length
     while (lo < hi) { const m = (lo + hi) >> 1; st.items[m].time < t ? (lo = m + 1) : (hi = m) }
@@ -210,6 +246,11 @@ function danmakuLayer(canvas, video) {
   function spawn(d) {
     const w = ctx.measureText(d.text).width
     const line = lineH()
+    const add = (lane, list) => {
+      const a = { d, w, lane, s: null } // 小圖在畫的時候才產生（每幀有上限）
+      list[lane] = a
+      active.push(a)
+    }
     if (d.type === 'scroll') {
       const count = Math.max(1, Math.floor((H * st.area) / line))
       for (let i = 0; i < count; i++) {
@@ -219,25 +260,25 @@ function danmakuLayer(canvas, video) {
           W - (d.time - last.d.time) * speed(last.w) + last.w + 16 <= W &&
           W - (last.d.time + SCROLL_SEC - d.time) * speed(w) >= 0
         )
-        if (ok) { const a = { d, w, lane: i }; lanes.scroll[i] = a; active.push(a); return }
+        if (ok) { add(i, lanes.scroll); return }
       }
     } else {
       const list = lanes[d.type]
       const count = Math.max(1, Math.floor((H * 0.3) / line))
       for (let i = 0; i < count; i++) {
         const last = list[i]
-        if (!last || d.time - last.d.time >= FIXED_SEC) { const a = { d, w, lane: i }; list[i] = a; active.push(a); return }
+        if (!last || d.time - last.d.time >= FIXED_SEC) { add(i, list); return }
       }
     }
     // 軌道都滿了就不顯示，避免疊在一起
   }
 
-  function frame() {
+  function frame(t) {
     raf = requestAnimationFrame(frame)
-    const dpr = window.devicePixelRatio || 1
+    const ratio = window.devicePixelRatio || 1
     const cw = canvas.clientWidth, ch = canvas.clientHeight
-    if (cw !== W || ch !== H) {
-      W = cw; H = ch
+    if (cw !== W || ch !== H || ratio !== dpr) {
+      W = cw; H = ch; dpr = ratio
       canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr)
       reset()
     }
@@ -245,7 +286,7 @@ function danmakuLayer(canvas, video) {
     ctx.clearRect(0, 0, W, H)
     if (!st.on || !st.items.length || !W) return
 
-    const pos = video.currentTime - st.offset
+    const pos = mediaTime(t ?? performance.now()) - st.offset
     // 往回拖或往前跳超過 1 秒：重新排，「現在應該在畫面上」的彈幕也補上
     if (Number.isNaN(lastPos) || pos < lastPos - 0.05 || pos - lastPos > 1) {
       reset()
@@ -255,10 +296,6 @@ function danmakuLayer(canvas, video) {
 
     const fs = fontSize(), line = lineH()
     ctx.font = `bold ${fs}px "Microsoft JhengHei", "PingFang TC", sans-serif`
-    ctx.textBaseline = 'alphabetic'
-    ctx.lineJoin = 'round'
-    ctx.lineWidth = Math.max(1.5, fs / 12)
-    ctx.strokeStyle = 'rgba(0,0,0,0.8)'
     ctx.globalAlpha = st.alpha
 
     while (next < st.items.length && st.items[next].time <= pos) {
@@ -267,22 +304,35 @@ function danmakuLayer(canvas, video) {
       if (age < (d.type === 'scroll' ? SCROLL_SEC : FIXED_SEC)) spawn(d)
     }
 
-    active = active.filter((a) => {
+    // 原地移除過期的，不每幀建新陣列
+    // 每幀最多新畫 12 張小圖：開始播放、拖動進度時畫面上一下子要補幾十則，分散到後面幾幀才不會卡一下
+    let budget = SPRITES_PER_FRAME
+    let k = 0
+    for (let i = 0; i < active.length; i++) {
+      const a = active[i]
       const age = pos - a.d.time
       let x, y
       if (a.d.type === 'scroll') {
-        if (age > SCROLL_SEC) return false
+        if (age > SCROLL_SEC) continue
         x = W - age * speed(a.w); y = line * (a.lane + 1) - line * 0.22
       } else {
-        if (age > FIXED_SEC) return false
+        if (age > FIXED_SEC) continue
         x = (W - a.w) / 2
         y = a.d.type === 'top' ? line * (a.lane + 1) - line * 0.22 : H - line * a.lane - line * 0.35
       }
-      ctx.strokeText(a.d.text, x, y)
-      ctx.fillStyle = a.d.color
-      ctx.fillText(a.d.text, x, y)
-      return true
-    })
+      active[k++] = a
+      if (!a.s) {
+        if (budget <= 0) continue
+        budget--
+        a.s = sprite(a.d, a.w, fs)
+      }
+      // 對齊到實際像素，貼圖不用重新取樣、文字也比較銳利
+      const s = a.s
+      const dx = Math.round((x - s.pad) * dpr) / dpr
+      const dy = Math.round((y - s.baseY) * dpr) / dpr
+      ctx.drawImage(s.img, dx, dy, s.cw, s.ch)
+    }
+    active.length = k
     ctx.globalAlpha = 1
   }
 

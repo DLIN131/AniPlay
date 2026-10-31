@@ -1,6 +1,7 @@
 package com.aniplay.core.player
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -11,6 +12,9 @@ import com.aniplay.core.net.Danmaku
 /**
  * 彈幕層。每一則彈幕的位置都由「影片目前時間 − 彈幕時間」直接算出來，不靠自己的計時器，
  * 所以暫停會停住、拖動進度會跳到對的位置、倍速播放時跟著變快，永遠和影片時間軸對齊。
+ *
+ * 效能：每則彈幕出現時先把「描邊＋文字」畫成一張小 Bitmap，之後每一幀只貼圖。
+ * 以前每一幀都重畫所有文字的描邊，彈幕一多就超過一幀的時間而卡頓。
  */
 class DanmakuView(context: Context) : View(context) {
 
@@ -48,7 +52,10 @@ class DanmakuView(context: Context) : View(context) {
 
     private var items: List<Danmaku> = emptyList()
 
-    private class Active(val d: Danmaku, val width: Float, val lane: Int)
+    private class Active(val d: Danmaku, val width: Float, val lane: Int) {
+        /** 預先畫好的小圖，在畫的時候才產生（每幀有上限） */
+        var bmp: Bitmap? = null
+    }
 
     private val active = ArrayList<Active>()
     /** 每條捲動軌道上最後一則彈幕 */
@@ -66,6 +73,27 @@ class DanmakuView(context: Context) : View(context) {
         typeface = Typeface.DEFAULT_BOLD
         style = Paint.Style.STROKE
         color = Color.BLACK
+    }
+    /** 貼小圖用，只負責整體透明度 */
+    private val bmpPaint = Paint()
+
+    /** 小圖四周留給描邊的空間 */
+    private fun pad() = (stroke.strokeWidth / 2f).toInt() + 2
+
+    private fun sprite(d: Danmaku, w: Float): Bitmap {
+        val p = pad()
+        val fm = fill.fontMetrics
+        val bw = (w + p * 2).toInt().coerceAtLeast(1)
+        val bh = (fm.descent - fm.ascent + p * 2).toInt().coerceAtLeast(1)
+        val b = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+        val c = Canvas(b)
+        val baseY = p - fm.ascent
+        fill.color = d.color
+        fill.alpha = 255
+        stroke.alpha = 204
+        c.drawText(d.text, p.toFloat(), baseY, stroke)
+        c.drawText(d.text, p.toFloat(), baseY, fill)
+        return b
     }
 
     fun setDanmaku(list: List<Danmaku>) {
@@ -130,7 +158,11 @@ class DanmakuView(context: Context) : View(context) {
             }
         }
 
-        val baseAlpha = (opacity * 255).toInt()
+        bmpPaint.alpha = (opacity * 255).toInt()
+        // 開始播放、拖動進度時畫面上一下子要補幾十則，每幀最多新畫 12 張，分散到後面幾幀
+        var budget = SPRITES_PER_FRAME
+        val ascent = fill.fontMetrics.ascent
+        val p = pad()
         val it = active.iterator()
         while (it.hasNext()) {
             val a = it.next()
@@ -160,11 +192,14 @@ class DanmakuView(context: Context) : View(context) {
                     y = height - line * a.lane - line * 0.35f
                 }
             }
-            fill.color = a.d.color
-            fill.alpha = baseAlpha
-            stroke.alpha = (baseAlpha * 0.8f).toInt()
-            canvas.drawText(a.d.text, x, y, stroke)
-            canvas.drawText(a.d.text, x, y, fill)
+            val b = a.bmp ?: if (budget > 0) {
+                budget--
+                sprite(a.d, a.width).also { a.bmp = it }
+            } else {
+                continue
+            }
+            // 對齊到整數像素，貼圖不用重新取樣
+            canvas.drawBitmap(b, Math.round(x - p).toFloat(), Math.round(y + ascent - p).toFloat(), bmpPaint)
         }
 
         postInvalidateOnAnimation()
@@ -213,5 +248,6 @@ class DanmakuView(context: Context) : View(context) {
         /** 捲動彈幕從右到左走完畫面的影片秒數 */
         const val SCROLL_SECONDS = 8.0
         const val FIXED_SECONDS = 4.0
+        const val SPRITES_PER_FRAME = 12
     }
 }
