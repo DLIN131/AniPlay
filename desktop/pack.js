@@ -8,6 +8,14 @@ const fs = require('fs')
 const out = process.argv[2] || 'dist'
 const version = process.env.APP_VERSION || require('./package.json').version
 
+// overwrite 會把整個輸出資料夾刪掉重建，裡面的 data（使用者的紀錄）要先搬開，打包完再放回去
+const appDir = path.join(out, 'AniPlay-win32-x64')
+const keep = path.join(out, '.AniPlay-data-keep')
+if (fs.existsSync(path.join(appDir, 'data'))) {
+  fs.rmSync(keep, { recursive: true, force: true })
+  fs.renameSync(path.join(appDir, 'data'), keep)
+}
+
 packager({
   dir: __dirname,
   name: 'AniPlay',
@@ -19,22 +27,22 @@ packager({
   icon: path.join(__dirname, 'src', 'icon.ico'),
   appVersion: version,
   // 只排除專案根目錄的東西（路徑以 / 開頭、相對於專案資料夾）
-  ignore: [/^\/dist($|\/)/, /^\/devserver\.js$/, /^\/pack\.js$/, /^\/\.gitignore$/],
+  // data 是開發時的紀錄，不能打包進去
+  ignore: [/^\/dist($|\/)/, /^\/data($|\/)/, /^\/devserver\.js$/, /^\/pack\.js$/, /^\/\.gitignore$/],
 }).then(([appPath]) => {
   // 確認播放 m3u8 需要的 hls.js 有打包進去
   const asar = require('@electron/asar')
   const files = asar.listPackage(path.join(appPath, 'resources', 'app.asar')).map((f) => f.replace(/\\/g, '/'))
-  if (!files.includes('/node_modules/hls.js/dist/hls.min.js')) {
-    console.error('打包結果缺少 hls.js/dist/hls.min.js')
-    process.exit(1)
-  }
-  if (files.some((f) => f.startsWith('/dist/'))) {
-    console.error('打包結果不應該包含 dist/')
-    process.exit(1)
-  }
+  if (!files.includes('/node_modules/hls.js/dist/hls.min.js')) throw new Error('打包結果缺少 hls.js/dist/hls.min.js')
+  if (files.some((f) => f.startsWith('/dist/') || f.startsWith('/data/'))) throw new Error('打包結果不應該包含 dist/ 或 data/')
   console.log(`打包完成：${appPath}（v${version}，${files.length} 個檔案）`)
   fs.writeFileSync(path.join(appPath, 'version.txt'), version)
 }).catch((err) => {
   console.error(err)
-  process.exit(1)
+  process.exitCode = 1
+}).finally(() => {
+  if (fs.existsSync(keep)) {
+    fs.mkdirSync(appDir, { recursive: true })
+    fs.renameSync(keep, path.join(appDir, 'data'))
+  }
 })

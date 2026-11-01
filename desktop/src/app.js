@@ -348,12 +348,59 @@ function danmakuLayer(canvas, video) {
 
 // ================= 本機儲存（收藏、紀錄、進度） =================
 
+/**
+ * 字串對字串的儲存區，用法和 localStorage 一樣。
+ * 桌面版存在程式資料夾的 data/aniplay-data.json（主程序負責寫檔），
+ * 不再用 localStorage：它在重開程式後會掉資料，更新完紀錄就不見了。
+ * 用瀏覽器開（devserver）時沒有 appData，才退回 localStorage。
+ */
+const kv = (() => {
+  const native = window.appData
+  if (!native) {
+    return {
+      getItem: (k) => localStorage.getItem(k),
+      setItem: (k, v) => { try { localStorage.setItem(k, String(v)) } catch {} },
+      removeItem: (k) => localStorage.removeItem(k),
+      keys: () => Object.keys(localStorage),
+      replace() {},
+    }
+  }
+  const { found, data: loaded } = native.load()
+  const data = Object.assign(Object.create(null), loaded)
+  // 第一次用新版：把舊版存在 localStorage 的資料搬過來
+  if (!found) {
+    try {
+      for (const k of Object.keys(localStorage)) data[k] = localStorage.getItem(k)
+    } catch {}
+    native.saveNow({ ...data })
+  }
+  let timer = 0
+  const save = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => native.save({ ...data }), 500)
+  }
+  // pagehide 在所有 beforeunload（例如播放頁存進度）之後才觸發，最後一次寫入不會漏掉
+  window.addEventListener('pagehide', () => { clearTimeout(timer); native.saveNow({ ...data }) })
+  return {
+    getItem: (k) => (k in data ? data[k] : null),
+    setItem(k, v) { data[k] = String(v); save() },
+    removeItem(k) { if (k in data) { delete data[k]; save() } },
+    keys: () => Object.keys(data),
+    /** 還原備份後換成新資料（主程序已經寫好檔案） */
+    replace(map) {
+      clearTimeout(timer)
+      for (const k of Object.keys(data)) delete data[k]
+      Object.assign(data, map)
+    },
+  }
+})()
+
 const store = {
   get(k, def) {
-    try { return JSON.parse(localStorage.getItem(k)) ?? def } catch { return def }
+    try { return JSON.parse(kv.getItem(k)) ?? def } catch { return def }
   },
   set(k, v) {
-    try { localStorage.setItem(k, JSON.stringify(v)) } catch {}
+    kv.setItem(k, JSON.stringify(v))
   },
   favorites() { return this.get('favorites', []) },
   isFav(id) { return this.favorites().some((a) => a.id === id) },
@@ -381,18 +428,18 @@ const store = {
   },
   clearHistory() {
     this.set('history', [])
-    Object.keys(localStorage).filter((k) => k.startsWith('pos_')).forEach((k) => localStorage.removeItem(k))
+    kv.keys().filter((k) => k.startsWith('pos_')).forEach((k) => kv.removeItem(k))
   },
   // 播放進度存成「秒數/片長」，例如 "754/1420"（舊版只有秒數，一樣讀得到）
   pos(id, s, e) { return this.posInfo(id, s, e).sec },
   posInfo(id, s, e) {
-    const [sec, dur] = String(localStorage.getItem(`pos_${id}_${s}_${e}`) || '').split('/').map(Number)
+    const [sec, dur] = String(kv.getItem(`pos_${id}_${s}_${e}`) || '').split('/').map(Number)
     return { sec: sec || 0, dur: dur || 0 }
   },
   savePos(id, s, e, sec, dur = 0) {
     const k = `pos_${id}_${s}_${e}`
     const v = dur > 0 ? `${Math.floor(sec)}/${Math.floor(dur)}` : String(Math.floor(sec))
-    try { sec > 0 ? localStorage.setItem(k, v) : localStorage.removeItem(k) } catch {}
+    sec > 0 ? kv.setItem(k, v) : kv.removeItem(k)
   },
   words() { return this.get('search_words', []) },
   addWord(w) { this.set('search_words', [w, ...this.words().filter((x) => x !== w)].slice(0, 20)) },
@@ -400,9 +447,9 @@ const store = {
   prunePositions() {
     const ids = new Set(this.history().map((h) => String(h.anime.id)))
     try {
-      Object.keys(localStorage)
+      kv.keys()
         .filter((k) => k.startsWith('pos_') && !ids.has(k.split('_')[1]))
-        .forEach((k) => localStorage.removeItem(k))
+        .forEach((k) => kv.removeItem(k))
     } catch {}
   },
 }
@@ -569,6 +616,7 @@ function render() {
     case 'later': return pageLocal('later')
     case 'history': return pageLocal('history')
     case 'changelog': return pageChangelog()
+    case 'data': return pageData()
     case 'list': return pageList(params.get('title') || '', JSON.parse(params.get('q') || '{}'))
     case 'detail': return pageDetail(Number(parts[1]))
     case 'play': return pagePlay(Number(parts[1]), Number(parts[2]) || 0, Number(parts[3]) || 0)
@@ -1059,8 +1107,8 @@ async function pagePlay(id, source, ep) {
   } else {
     video.src = e.url
   }
-  const savedSpeed = Number(localStorage.getItem('speed')) || 1
-  video.volume = Math.min(1, Math.max(0, Number(localStorage.getItem('volume') ?? 1)))
+  const savedSpeed = Number(kv.getItem('speed')) || 1
+  video.volume = Math.min(1, Math.max(0, Number(kv.getItem('volume') ?? 1)))
   video.addEventListener('loadedmetadata', () => {
     video.playbackRate = savedSpeed
     if (start > 0 && start < video.duration - 5) {
@@ -1079,7 +1127,7 @@ async function pagePlay(id, source, ep) {
   const setVolume = (v) => {
     video.volume = Math.max(0, Math.min(1, v))
     video.muted = false
-    localStorage.setItem('volume', String(video.volume))
+    kv.setItem('volume', String(video.volume))
   }
 
   const playBtn = $('.c-play')
@@ -1149,7 +1197,7 @@ async function pagePlay(id, source, ep) {
   }
   ;[0.5, 0.75, 1, 1.25, 1.5, 2].forEach((v) => {
     const b = h(`<button data-v="${v}">${v}x</button>`)
-    b.onclick = () => { video.playbackRate = v; localStorage.setItem('speed', String(v)); drawSpeed() }
+    b.onclick = () => { video.playbackRate = v; kv.setItem('speed', String(v)); drawSpeed() }
     speedOpts.appendChild(b)
   })
   video.addEventListener('ratechange', drawSpeed)
@@ -1201,7 +1249,7 @@ async function pagePlay(id, source, ep) {
   // ---------- 彈幕 ----------
   const dm = danmakuLayer($('canvas.danmaku'), video)
   const offsetKey = `dm_offset_${id}`
-  dm.update('offset', Number(localStorage.getItem(offsetKey)) || 0)
+  dm.update('offset', Number(kv.getItem(offsetKey)) || 0)
   const fmtOffset = (v) => (v === 0 ? '不調整' : v > 0 ? `延後 ${v.toFixed(1)} 秒` : `提前 ${(-v).toFixed(1)} 秒`)
   const optGroups = [
     ['.dm-size', 'size', [[0.75, '小'], [1, '中'], [1.25, '大'], [1.5, '特大']]],
@@ -1222,7 +1270,7 @@ async function pagePlay(id, source, ep) {
   const setOffset = (v) => {
     v = Math.round(Math.max(-30, Math.min(30, v)) * 10) / 10
     dm.update('offset', v)
-    v ? localStorage.setItem(offsetKey, String(v)) : localStorage.removeItem(offsetKey)
+    v ? kv.setItem(offsetKey, String(v)) : kv.removeItem(offsetKey)
     drawDm()
     showToast(`彈幕${fmtOffset(v)}`)
   }
@@ -1349,13 +1397,71 @@ async function pageChangelog() {
   }
 }
 
+/** 備份與還原：資料檔位置、匯出、從檔案或自動備份還原 */
+async function pageData() {
+  const token = route.token
+  view.innerHTML = '<h1>備份與還原</h1>' + loading()
+  if (!window.appData) {
+    view.innerHTML = '<h1>備份與還原</h1><div class="note-card">只有電腦版程式可以備份和還原。</div>'
+    return
+  }
+  const info = await window.appData.info()
+  if (route.token !== token) return
+  const fmtTime = (ms) => new Date(ms).toLocaleString('zh-TW', { hour12: false })
+  const { summary: n } = info
+  view.innerHTML = `<h1>備份與還原</h1>
+    <div class="note-card data-card">
+      <div>收藏 <b>${n.favorites}</b> 部　待看 <b>${n.later}</b> 部　觀看紀錄 <b>${n.history}</b> 部</div>
+      <div class="muted data-path">紀錄存在：<span></span></div>
+      <div class="muted">這個資料夾在 AniPlay 程式資料夾裡，程式內更新不會動到它。整個 AniPlay 資料夾搬到別的地方或別台電腦，紀錄也會跟著走。</div>
+      <div class="data-actions">
+        <button class="primary export">匯出備份…</button>
+        <button class="import">從備份檔還原…</button>
+        <button class="open">開啟資料夾</button>
+      </div>
+      <div class="muted data-status"></div>
+    </div>
+    <h2>自動備份</h2>
+    <div class="muted" style="margin:-4px 0 10px">每天第一次開程式時自動備份一次，保留最新 20 份；還原前也會先把目前的紀錄備份起來。</div>
+    <div class="backup-list"></div>`
+  view.querySelector('.data-path span').textContent = info.file
+  const status = view.querySelector('.data-status')
+  const restored = (map) => {
+    if (!map) return
+    kv.replace(map)
+    status.textContent = '已還原，重新載入中…'
+    setTimeout(() => location.reload(), 600)
+  }
+  const fail = (e) => { status.textContent = String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') }
+  view.querySelector('.export').onclick = async () => {
+    try {
+      const f = await window.appData.exportTo()
+      if (f) status.textContent = `已匯出到 ${f}`
+    } catch (e) { fail(e) }
+  }
+  view.querySelector('.import').onclick = () => window.appData.restore().then(restored, fail)
+  view.querySelector('.open').onclick = () => window.appData.openFolder()
+  const list = view.querySelector('.backup-list')
+  if (!info.backups.length) list.innerHTML = '<div class="muted">還沒有自動備份</div>'
+  for (const b of info.backups) {
+    const row = h(`<div class="backup-row"><span class="name"></span><span class="muted">${fmtTime(b.time)}　${Math.max(1, Math.round(b.size / 1024))} KB</span><button>還原</button></div>`)
+    row.querySelector('.name').textContent = b.name.replace(/.json$/, '')
+    row.querySelector('button').onclick = () => {
+      if (!confirm(`要用「${b.name.replace(/.json$/, '')}」的備份取代目前的紀錄嗎？
+目前的紀錄會先另外備份一份。`)) return
+      window.appData.restore(b.name).then(restored, fail)
+    }
+    list.appendChild(row)
+  }
+}
+
 /** 剛更新完第一次開啟：顯示這次更新了什麼。第一次安裝不顯示 */
 async function checkWhatsNew() {
   const current = Number(window.APP_VERSION) || 0
   if (!current) return
-  const last = Number(localStorage.getItem('last_seen_version')) || 0
+  const last = Number(kv.getItem('last_seen_version')) || 0
   if (last === current) return
-  localStorage.setItem('last_seen_version', String(current))
+  kv.setItem('last_seen_version', String(current))
   if (!last) return
   try {
     const note = (await fetchChangelog()).find((n) => n.code === current)
@@ -1388,7 +1494,7 @@ async function checkUpdate() {
     const r = await res.json()
     const code = Number(String(r.tag_name || '').split('.').pop()) || 0
     const asset = (r.assets || []).find((a) => a.name === 'AniPlay-Windows.zip')
-    if (code <= current || !asset || Number(localStorage.getItem('skipped_version')) === code) return
+    if (code <= current || !asset || Number(kv.getItem('skipped_version')) === code) return
     const notes = cleanNotes(r.body)
     const bar = h(`<div class="update-bar">
       <div><b>發現新版本 v1.0.${code}</b>（目前 v1.0.${current}）<div class="notes"></div><div class="status"></div></div>
@@ -1421,7 +1527,7 @@ async function checkUpdate() {
         status.textContent = `更新失敗：${String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`
       }
     }
-    bar.querySelector('.skip').onclick = () => { localStorage.setItem('skipped_version', String(code)); bar.remove() }
+    bar.querySelector('.skip').onclick = () => { kv.setItem('skipped_version', String(code)); bar.remove() }
     bar.querySelector('.later').onclick = () => bar.remove()
     document.body.appendChild(bar)
   } catch {}

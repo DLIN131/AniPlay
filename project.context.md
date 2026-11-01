@@ -30,7 +30,8 @@
 - 導覽：不用 navigation library，自己維護 `stack: mutableStateListOf<Route>()` + `LocalNav`。
 
 ### 桌面（`desktop/`）
-- `main.js`：建立視窗、單一實例鎖、呼叫 `net-policy`、`updater`。
+- `main.js`：建立視窗、單一實例鎖、呼叫 `net-policy`、`data-store`、`updater`。
+- `data-store.js` + `preload.js`（`window.appData`）：收藏、待看、觀看紀錄、播放進度、設定全部存在**程式資料夾**的 `data/aniplay-data.json`（開發時是 `desktop/data/`，gitignore），每天自動備份到 `data/backups/`；頁面用 `kv`（介面同 localStorage）讀寫。
 - `net-policy.js`：關閉磁碟快取、刪舊快取、補 CORS 標頭。
 - `updater.js` + `preload.js`：程式內更新（IPC：`update:supported` / `update:download` / `update:install`）。
 - `src/app.js`：整個前端（hash 路由 `#/home`、`#/browse`、`#/play/<id>/<線路>/<集>`…），`src/style.css`、`src/index.html`。
@@ -75,10 +76,29 @@
 10. **測試桌面打包版**：用 `--remote-debugging-port=9339 --remote-allow-origins=*` 啟動，再用 CDP（WebSocket `Runtime.evaluate`，需要時 `userGesture: true`）操作。視窗被蓋住時 `document.hidden` 為 true，影片不載入、全螢幕卡住。**不要**用 `SetForegroundWindow` 把視窗拉到前面打擾使用者；能用 `show: false` 的小測試就用。
 11. **Android 測試**：使用者不用模擬器，只用 Gradle 編譯；手機／電視上的實際行為都還沒在實機驗證過。
 12. 改檔時用 node 腳本做字串替換要小心：heredoc 裡的 `\\n` 寫進檔案可能變成真的換行；同名欄位（例如 `Anime.year` 和 `Query.year`）會替換到第一個。
+13. **桌面版紀錄不能放 localStorage**：Chromium 的 localStorage（`userData/Local Storage/leveldb`）實際上會在重開程式後掉資料（使用者電腦上看到 `000003.ldb` 和 `000003.log` 同編號、重開後 log 裡的寫入整段沒被讀回來），使用者看到的就是「更新後觀看紀錄、待看清單不見」。現在改存 `data/aniplay-data.json`（見 v1.0.14）。相關：
+   - `pack.js` 的 `overwrite: true` 會刪掉整個 `dist/AniPlay-win32-x64`，所以打包前先把 `data` 搬到 `dist/.AniPlay-data-keep`，打包完（成功或失敗）再搬回去；`/data` 也排除在打包內容外。
+   - 程式內更新的 robocopy 只覆蓋新版有的檔案（沒有 `/MIR`、`/PURGE`），`data` 不會被動到——**以後不能改成鏡像複製**。
+   - 測試要用自己的 userData 和資料夾（`app.setPath('userData', …)`、把 `data-store.js` 複製到暫存資料夾讓 `__dirname` 指過去），不要碰使用者的 `%APPDATA%/AniPlay`；以前的測試共用使用者的 userData，可能也蓋掉過使用者的紀錄。
+   - 測試 harness 要加 `app.on('window-all-closed', () => {})`，不然關掉最後一個視窗程式就結束，後面的步驟卡住。
 
 ---
 
 ## 3. 改動紀錄（新的在上面）
+
+### v1.0.14（2026-11-01）電腦版紀錄改存程式資料夾，新增備份與還原
+- **修了什麼**：電腦版每次更新後觀看紀錄、待看清單會不見。原因是紀錄存在 Chromium 的 localStorage，重開程式後會掉資料（見坑 #13）。
+- **改了什麼**：
+  - 收藏、待看、觀看紀錄、播放進度、音量／倍速／彈幕設定全部存到 `AniPlay 資料夾/data/aniplay-data.json`；放不進去（例如裝在 Program Files）才退回 `userData/data`。
+  - 第一次開新版時，把舊版 localStorage 的資料搬進檔案（檔案不存在才搬）。
+  - 側邊欄新增「💾 備份與還原」（`#/data`）：顯示資料檔位置和筆數、匯出備份（存檔對話框）、從備份檔還原、開啟資料夾、自動備份列表。
+  - 每天第一次開程式自動備份到 `data/backups/YYYY-MM-DD.json`，還原前另存 `還原前-日期-時間.json`，總共保留最新 20 份。資料檔壞掉時改名成 `.broken-時間戳`，改讀最新的自動備份。
+- **技術細節**：
+  - 頁面端 `kv`（`getItem/setItem/removeItem/keys/replace`）：啟動時 `appData.load()`（`ipcRenderer.sendSync`）拿全部資料放記憶體；寫入後 500 ms 合併送 `data:save`；`pagehide` 時 `data:save-now`（同步），排在播放頁 `beforeunload` 存進度之後。沒有 `window.appData`（devserver 用瀏覽器開）時退回 localStorage。
+  - 檔案格式 `{ app: 'AniPlay', format: 1, savedAt, data }`：頁面給的是字串，存檔時能 `JSON.parse` 成非字串的就存成物件（備份檔看得懂），解析出字串的保持原字串，讀回來才會完全一樣。先寫 `.tmp` 再 `rename`。
+  - 還原：自動備份用檔名（`path.basename` 防止 `../`），其他用選檔對話框；格式不對會說「這不是 AniPlay 的備份檔」。還原後 `kv.replace(map)` 再重新載入頁面。
+  - 使用者電腦上的舊紀錄救回：舊 leveldb 的 `000003.ldb`（10/28 的快照）＋ `000003.log`（之後的寫入，自己解析 leveldb log 格式）合併成 `dist/AniPlay-win32-x64/data/aniplay-data.json`，觀看紀錄 7 部。
+- **測試**（`show: false` Electron，獨立 userData 和資料夾）：舊 localStorage 資料搬進檔案 ✓；新增紀錄後立刻離開頁面，檔案有寫進去 ✓；清空 localStorage 後重開，紀錄還在 ✓；改壞後從自動備份還原、還原前備份有產生 ✓；`../` 路徑被擋 ✓；截圖確認備份頁面。
 
 ### v1.0.13（2026-11-01）修正彈幕多的時候卡頓（三版）
 - **修了什麼**：彈幕密集時畫面一頓一頓。原因是每一幀都把畫面上所有彈幕重新畫一次「描邊＋文字」，文字描邊點陣化很貴。

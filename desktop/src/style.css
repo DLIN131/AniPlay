@@ -52,9 +52,10 @@ button.primary:hover { filter: brightness(1.1); }
 .sidebar nav a { padding: 10px 14px; border-radius: 10px; color: var(--gray); }
 .sidebar nav a:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
 .sidebar nav a.active { background: rgba(255, 107, 154, 0.15); color: var(--accent); font-weight: bold; }
-.sidebar .changelog-link { margin-top: auto; padding: 10px 14px; border-radius: 10px; color: var(--gray); font-size: 13px; }
+.sidebar .changelog-link { padding: 10px 14px; border-radius: 10px; color: var(--gray); font-size: 13px; }
 .sidebar .changelog-link:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
 .sidebar .changelog-link.active { background: rgba(255, 107, 154, 0.15); color: var(--accent); }
+.sidebar .changelog-link:first-of-type { margin-top: auto; }
 .sidebar .changelog-link + .hint { margin-top: 8px; }
 .sidebar .hint { margin-top: auto; color: var(--gray); font-size: 12px; padding: 0 12px; }
 
@@ -283,3 +284,11 @@ h2 .more:hover { color: var(--accent); }
 .week-summary .paused-count { color: #ff8787; font-weight: bold; }
 .week-summary .paused-name { background: rgba(229, 72, 77, 0.18); color: #ffb3b3; border-radius: 12px; padding: 2px 10px; cursor: pointer; }
 .week-summary .paused-name:hover { background: rgba(229, 72, 77, 0.35); }
+
+/* 備份與還原 */
+.data-card { display: flex; flex-direction: column; gap: 10px; }
+.data-path span { color: var(--text); word-break: break-all; user-select: text; }
+.data-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.backup-list { max-width: 820px; }
+.backup-row { display: flex; align-items: center; gap: 14px; background: var(--surface); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
+.backup-row .name { flex: 1; }

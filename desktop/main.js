@@ -2,6 +2,7 @@ const { app, BrowserWindow, shell } = require('electron')
 const path = require('path')
 const updater = require('./updater')
 const netPolicy = require('./net-policy')
+const dataStore = require('./data-store')
 
 // 看過的影片不存磁碟，不然越看占用越多
 netPolicy.disableDiskCache()
@@ -62,6 +63,7 @@ app.whenReady().then(() => {
   if (!app.hasSingleInstanceLock()) return
   netPolicy.allowCors()
   netPolicy.removeOldCache()
+  dataStore.setup()
   updater.setup()
   createWindow()
   app.on('activate', () => {
