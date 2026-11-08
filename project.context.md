@@ -67,7 +67,7 @@
    - 背景執行的 cmd 用系統字碼頁（Big5）讀批次檔 → 路徑有中文會亂碼。腳本只放英數字，路徑全部用環境變數（`AP_SRC`、`AP_DST`、`AP_EXE`、`AP_PID`、`AP_LOG`）傳。
    - 每次更新用 `%TEMP%/AniPlay-update/<時間戳>` 新資料夾；清理時跳過正在用的和 10 分鐘內的。
    - PowerShell 錯誤訊息要設 `[Console]::OutputEncoding=UTF8`，不然是 Big5 亂碼。
-4. **全螢幕**：只把 `<video>` 全螢幕，彈幕 canvas 會被蓋掉。桌面版控制列、彈幕、面板都放在 `.video-wrap` 裡，全螢幕的是整個 `.video-wrap`；原生控制列不用。
+4. **全螢幕**：只把 `<video>` 全螢幕，彈幕 canvas 會被蓋掉。桌面版控制列、彈幕、面板都放在 `.video-wrap` 裡。全螢幕的是**整個頁面**（`document.documentElement`），CSS `:root:fullscreen .video-wrap` 用 `position: fixed` 蓋滿畫面——不能直接全螢幕 `.video-wrap`：換集會重建播放頁，被全螢幕的元素一從 DOM 移除就會跳出全螢幕（v1.0.15）。離開播放頁由 `render()` 退出全螢幕。原生控制列不用。
 5. **彈幕對齊**：彈幕位置一律由「影片目前時間 − 彈幕時間」算（Android 用 `player.currentPosition`，桌面用 `video.currentTime`），不用自己的計時器；往回拖或跳超過 1 秒就重排，並補上「現在應該在畫面上」的彈幕。
 6. **hls.js 記憶體**：預設 `backBufferLength` 是無限，長片越看越吃記憶體 → 設 90 秒。
 7. **桌面版 mp4**：有些作品是 mp4，不能丟給 hls.js；網址不是 `.m3u8` 就直接 `video.src`。
@@ -81,10 +81,18 @@
    - 程式內更新的 robocopy 只覆蓋新版有的檔案（沒有 `/MIR`、`/PURGE`），`data` 不會被動到——**以後不能改成鏡像複製**。
    - 測試要用自己的 userData 和資料夾（`app.setPath('userData', …)`、把 `data-store.js` 複製到暫存資料夾讓 `__dirname` 指過去），不要碰使用者的 `%APPDATA%/AniPlay`；以前的測試共用使用者的 userData，可能也蓋掉過使用者的紀錄。
    - 測試 harness 要加 `app.on('window-all-closed', () => {})`，不然關掉最後一個視窗程式就結束，後面的步驟卡住。
+   - 要測全螢幕就用 `webPreferences: { offscreen: true }` 的視窗：HTML 全螢幕可以用、視窗不會出現在螢幕上；`executeJavaScript(code, true)` 帶使用者手勢。
 
 ---
 
 ## 3. 改動紀錄（新的在上面）
+
+### v1.0.15（2026-11-08）電腦版全螢幕換集不會跳出全螢幕
+- **修了什麼**：全螢幕時按下一集／上一集（按鈕、N／P 鍵、選集、看完自動下一集）會跳回一般畫面。原因是換集用 `goReplace` 重建整個播放頁，原本被全螢幕的 `.video-wrap` 被移除，瀏覽器就自動退出全螢幕。Android 換集是在同一個 PlayerActivity 裡 `playEpisode()`，沒有這個問題。
+- **技術細節**：
+  - `toggleFs()` 改成 `document.documentElement.requestFullscreen()`；`style.css` 的 `.video-wrap:fullscreen` 全部改成 `:root:fullscreen .video-wrap`（`position: fixed; inset: 0; z-index: 901`），`:root:fullscreen body::after` 黑底（z-index 900）蓋住換集載入中的空檔。
+  - 退出全螢幕從播放頁 cleanup 移到 `render()`：目標頁不是 `play` 才退出；換集載入失敗也退出（不然只剩黑畫面）。新播放頁建立時 `drawFs()` 依目前狀態畫全螢幕按鈕（換集後不會有 `fullscreenchange`）。
+- **測試**（`offscreen: true` 的 Electron 視窗，不會出現在螢幕上；HTML 全螢幕在離屏繪製也能用）：全螢幕後按下一集、再按 N 鍵，`document.fullscreenElement` 一直是 HTML、`.video-wrap` 都是 1920×1080 蓋滿、標題換成第 02、03 集；按 ‹ 返回到詳情頁後退出全螢幕。截圖確認全螢幕第 2 集的影片、彈幕、控制列正常。
 
 ### v1.0.14（2026-11-01）電腦版紀錄改存程式資料夾，新增備份與還原
 - **修了什麼**：電腦版每次更新後觀看紀錄、待看清單會不見。原因是紀錄存在 Chromium 的 localStorage，重開程式後會掉資料（見坑 #13）。

@@ -606,6 +606,8 @@ function render() {
   const tab = parts[0] || 'home'
   // 播放器有自己的返回按鈕
   backbar.classList.toggle('show', canGoBack() && tab !== 'play')
+  // 全螢幕只給播放器用：換集（還是播放頁）就維持全螢幕，離開播放器才退出
+  if (document.fullscreenElement && tab !== 'play') document.exitFullscreen()
   document.querySelectorAll('.sidebar a[data-tab]').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab))
   view.innerHTML = ''
   switch (tab) {
@@ -989,7 +991,10 @@ async function pagePlay(id, source, ep) {
   try {
     d = await detail(id)
   } catch (e) {
-    if (route.token === token) view.replaceChildren(errorBox(e.message, render))
+    if (route.token !== token) return
+    // 全螢幕時換集失敗：退出全螢幕，不然只看得到黑畫面
+    if (document.fullscreenElement) document.exitFullscreen()
+    view.replaceChildren(errorBox(e.message, render))
     return
   }
   if (route.token !== token) return
@@ -999,7 +1004,7 @@ async function pagePlay(id, source, ep) {
   const e = src.episodes[ep]
   store.addHistory({ anime: { ...a }, source, episode: ep, episodeName: e.name })
 
-  // 控制列全部疊在影片上（video-wrap 裡），全螢幕放大的是整個 video-wrap，
+  // 控制列全部疊在影片上（video-wrap 裡），全螢幕時 video-wrap 蓋滿整個畫面，
   // 所以全螢幕時彈幕、控制列、彈幕設定、選集都還在
   const multi = src.episodes.length > 1
   const el = h(`<div class="player-page">
@@ -1234,17 +1239,17 @@ async function pagePlay(id, source, ep) {
     toggleFs()
   })
 
-  // 全螢幕放大整個 video-wrap（影片＋彈幕＋控制列）
+  // 全螢幕的是整個頁面（html），再用 CSS 讓 video-wrap 蓋滿畫面。
+  // 不直接全螢幕 video-wrap：換集會重建播放頁，舊的 video-wrap 被移除時就會跳出全螢幕
   const toggleFs = () => {
     if (document.fullscreenElement) document.exitFullscreen()
-    else wrap.requestFullscreen().catch(() => {})
+    else document.documentElement.requestFullscreen().catch(() => {})
   }
   $('.c-fs').onclick = toggleFs
-  const onFsChange = () => {
-    $('.c-fs').textContent = document.fullscreenElement ? '⛶ 離開' : '⛶'
-    showCtrl()
-  }
+  const drawFs = () => { $('.c-fs').textContent = document.fullscreenElement ? '⛶ 離開' : '⛶' }
+  const onFsChange = () => { drawFs(); showCtrl() }
   document.addEventListener('fullscreenchange', onFsChange)
+  drawFs()
 
   // ---------- 彈幕 ----------
   const dm = danmakuLayer($('canvas.danmaku'), video)
@@ -1343,7 +1348,6 @@ async function pagePlay(id, source, ep) {
     clearTimeout(hideTimer)
     document.removeEventListener('keydown', onKey)
     document.removeEventListener('fullscreenchange', onFsChange)
-    if (document.fullscreenElement) document.exitFullscreen()
     dm.destroy()
     if (hls) hls.destroy()
     video.removeAttribute('src')
