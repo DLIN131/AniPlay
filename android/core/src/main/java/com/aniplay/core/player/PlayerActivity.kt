@@ -139,6 +139,7 @@ class PlayerActivity : ComponentActivity() {
                     showHint("自動播放下一集")
                     playEpisode(episode + 1, 0L)
                 } else {
+                    Store.setFinished(anime.id, true)
                     showHint("已經是最後一集")
                     showOverlay()
                 }
@@ -762,6 +763,8 @@ class PlayerActivity : ComponentActivity() {
         val dur = player.duration
         val done = ended || (dur > 0 && dur - pos < 30_000)
         Store.savePosition(anime.id, source, episode, if (done) 0L else pos)
+        // 最後一集看完就不再出現在「繼續觀看」
+        if (done && episode == urls.lastIndex) Store.setFinished(anime.id, true)
     }
 
     override fun onPause() {

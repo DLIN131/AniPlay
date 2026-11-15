@@ -426,6 +426,14 @@ const store = {
     h.unshift(item)
     this.set('history', h.slice(0, 300))
   },
+  /** 看完最後一集時標記 finished，不再出現在「繼續觀看」；重新播放任何一集（addHistory）就會變回未看完 */
+  setFinished(id, finished) {
+    const h = this.history()
+    const x = h.find((x) => x.anime.id === id)
+    if (!x || !!x.finished === finished) return
+    x.finished = finished
+    this.set('history', h)
+  },
   clearHistory() {
     this.set('history', [])
     kv.keys().filter((k) => k.startsWith('pos_')).forEach((k) => kv.removeItem(k))
@@ -493,6 +501,7 @@ function card(a, sub, opts = {}) {
 /** 觀看紀錄的一筆 → 「第 03 集 12:34 / 23:40」和進度（0～1） */
 function watchInfo(x) {
   const p = store.posInfo(x.anime.id, x.source, x.episode)
+  if (x.finished) return { text: '已看完', progress: 0 }
   let text = `第 ${x.episodeName} 集`
   if (p.sec > 0) text += ` ${fmt(p.sec)}${p.dur ? ` / ${fmt(p.dur)}` : ''}`
   return { text, progress: p.sec > 0 && p.dur > 0 ? p.sec / p.dur : 0 }
@@ -679,7 +688,8 @@ async function pageHome() {
       later.forEach((x) => row.appendChild(card(x)))
       view.append(head, row)
     }
-    const hist = store.history().slice(0, 18)
+    // 最後一集已經看完的不顯示
+    const hist = store.history().filter((x) => !x.finished).slice(0, 18)
     if (hist.length) {
       view.appendChild(h('<h2>繼續觀看</h2>'))
       const row = h('<div class="row"></div>')
@@ -1312,10 +1322,12 @@ async function pagePlay(id, source, ep) {
     if (!video.duration) return
     const done = video.duration - video.currentTime < 30
     store.savePos(id, source, ep, done ? 0 : video.currentTime, video.duration)
+    if (done && ep === src.episodes.length - 1) store.setFinished(id, true)
   }
   const timer = setInterval(save, 5000)
   video.addEventListener('ended', () => {
     store.savePos(id, source, ep, 0)
+    if (ep === src.episodes.length - 1) store.setFinished(id, true)
     if (ep < src.episodes.length - 1) { showToast('自動播放下一集'); setTimeout(() => goEp(ep + 1), 1200) }
   })
 

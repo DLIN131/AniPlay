@@ -69,7 +69,8 @@ fun HomeScreen() {
             if (later.isNotEmpty()) {
                 item(key = "later") { AnimeRow("待看清單", later, onClick = nav.openAnime) }
             }
-            val cont = Store.history.take(15)
+            // 最後一集已經看完的不顯示
+            val cont = Store.history.filter { !it.finished }.take(15)
             if (cont.isNotEmpty()) {
                 item(key = "continue") {
                     AnimeRow(
@@ -247,7 +248,7 @@ fun LocalListScreen(kind: LocalList) {
         val list: List<Pair<com.aniplay.core.net.Anime, String?>> = when (kind) {
             LocalList.Favorites -> Store.favorites.map { it to null }
             LocalList.WatchLater -> Store.watchLater.map { it to null }
-            LocalList.History -> Store.history.map { it.anime.copy(remarks = "") to "看到第 ${it.episodeName} 集" }
+            LocalList.History -> Store.history.map { it.anime.copy(remarks = "") to if (it.finished) "已看完" else "看到第 ${it.episodeName} 集" }
         }
         if (list.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

@@ -87,6 +87,16 @@
 
 ## 3. 改動紀錄（新的在上面）
 
+### v1.0.16（2026-11-15）最後一集看完就不顯示在「繼續觀看」（三版）
+- **改了什麼**：看完最後一集（播到結束，或看到最後 30 秒內離開）的作品，首頁「繼續觀看」不再顯示；觀看紀錄裡保留，副標改成「已看完」。之後重新播放這部的任何一集，又會回到「繼續觀看」。只有一集的劇場版看完也一樣。
+- **技術細節**：
+  - 觀看紀錄每筆多一個 `finished`（舊紀錄沒有這個欄位＝未看完，所以這次更新前就看完的，要再播一次最後一集到結束才會被隱藏）。`addHistory` 每次開始播都寫一筆新的（沒有 `finished`），所以重看會自動變回未看完。
+  - 桌面 `app.js`：`store.setFinished(id, true)` 在播放頁 `save()`（每 5 秒、離開時；`done` 且 `ep === src.episodes.length - 1`）和 `ended`（最後一集）呼叫；首頁 `store.history().filter((x) => !x.finished)`；`watchInfo()` 對 finished 回傳「已看完」。
+  - Android `Store.HistoryItem.finished`（JSON 欄位 `finished`）、`Store.setFinished()`（原地 copy，順序不變）；`PlayerActivity.saveProgress()` 和 `STATE_ENDED` 最後一集時標記；phone／TV 首頁過濾，觀看紀錄列表顯示「已看完」。
+  - 「最後一集」是指目前這條線路當下的最後一集；連載中的作品看完最新一集也會隱藏，出新集後要從詳情頁或時間表點進去。
+- **測試**：桌面 `offscreen` Electron（獨立 userData／data）：作品 A 第 1 集看到 2:00、作品 B 跳到最後一集結尾播完 → B `finished: true`，首頁「繼續觀看」只剩 A，觀看紀錄 B 顯示「已看完」；再播 B 第 1 集 → `finished: false`、回到「繼續觀看」。Android `:phone:compileDebugKotlin :tv:compileDebugKotlin` 通過（沒有實機測試）。
+- **坑**：harness 用 `<<'EOF'` 寫的測試碼裡 `/\n+/g` 傳進頁面會變成真的換行，正則語法錯誤、`executeJavaScript` 永遠不回來——用 `split(String.fromCharCode(10))`。
+
 ### v1.0.15（2026-11-08）電腦版全螢幕換集不會跳出全螢幕
 - **修了什麼**：全螢幕時按下一集／上一集（按鈕、N／P 鍵、選集、看完自動下一集）會跳回一般畫面。原因是換集用 `goReplace` 重建整個播放頁，原本被全螢幕的 `.video-wrap` 被移除，瀏覽器就自動退出全螢幕。Android 換集是在同一個 PlayerActivity 裡 `playEpisode()`，沒有這個問題。
 - **技術細節**：

@@ -181,7 +181,8 @@ fun HomeScreen() {
                             AnimeRow(laterList, onClick = nav.openAnime)
                         }
                     }
-                    val continueList = Store.history.take(12)
+                    // 最後一集已經看完的不顯示
+                    val continueList = Store.history.filter { !it.finished }.take(12)
                     if (continueList.isNotEmpty()) {
                         item(key = "continue") {
                             SectionTitle("繼續觀看")
@@ -410,7 +411,7 @@ fun MineScreen() {
         val list: List<Pair<Anime, String?>> = when (page) {
             0 -> Store.favorites.map { it to null }
             1 -> Store.watchLater.map { it to null }
-            else -> Store.history.map { it.anime.copy(remarks = "") to "看到第 ${it.episodeName} 集" }
+            else -> Store.history.map { it.anime.copy(remarks = "") to if (it.finished) "已看完" else "看到第 ${it.episodeName} 集" }
         }
         if (list.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
