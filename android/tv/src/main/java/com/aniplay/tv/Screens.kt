@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.Text
+import com.aniplay.core.net.Anime
 import com.aniplay.core.net.Api
 import com.aniplay.core.net.Query
 import com.aniplay.core.net.Store
@@ -69,16 +70,21 @@ fun HomeScreen() {
             if (later.isNotEmpty()) {
                 item(key = "later") { AnimeRow("待看清單", later, onClick = nav.openAnime) }
             }
-            // 最後一集已經看完的不顯示
-            val cont = Store.history.filter { !it.finished }.take(15)
+            // 最後一集已經看完的、自己移除的不顯示
+            val cont = Store.continueList().take(15)
             if (cont.isNotEmpty()) {
                 item(key = "continue") {
+                    var removing by remember { mutableStateOf<Anime?>(null) }
                     AnimeRow(
-                        "繼續觀看",
+                        "繼續觀看（長按 OK 可移除）",
                         cont.map { it.anime.copy(remarks = "") },
                         onClick = nav.openAnime,
                         subtitles = cont.associate { it.anime.id to "看到第 ${it.episodeName} 集" },
+                        onLongClick = { removing = it },
                     )
+                    removing?.let { a ->
+                        RemoveContinueDialog(a, onConfirm = { Store.setDismissed(a.id); removing = null }, onDismiss = { removing = null })
+                    }
                 }
             }
             items(vm.rows, key = { it.title }) { row ->

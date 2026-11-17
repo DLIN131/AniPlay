@@ -6,13 +6,17 @@ import androidx.compose.runtime.mutableStateListOf
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** 觀看紀錄裡的一筆：看到哪條線路的哪一集；finished＝最後一集已經看完（不再出現在「繼續觀看」） */
+/**
+ * 觀看紀錄裡的一筆：看到哪條線路的哪一集。
+ * finished＝最後一集已經看完、dismissed＝使用者從「繼續觀看」移除，兩種都不再出現在「繼續觀看」（觀看紀錄保留）
+ */
 data class HistoryItem(
     val anime: Anime,
     val source: Int,
     val episode: Int,
     val episodeName: String,
     val finished: Boolean = false,
+    val dismissed: Boolean = false,
 )
 
 /** 本機的收藏、待看清單、觀看紀錄、播放進度（不登入網站帳號，全部存在裝置上） */
@@ -86,6 +90,17 @@ object Store {
         saveHistory()
     }
 
+    /** 從「繼續觀看」移除（觀看紀錄保留）；重新播放任何一集就會回來 */
+    fun setDismissed(id: Int) {
+        val i = history.indexOfFirst { it.anime.id == id }
+        if (i < 0 || history[i].dismissed) return
+        history[i] = history[i].copy(dismissed = true)
+        saveHistory()
+    }
+
+    /** 首頁「繼續觀看」要顯示的 */
+    fun continueList() = history.filter { !it.finished && !it.dismissed }
+
     fun removeHistory(id: Int) {
         history.removeAll { it.anime.id == id }
         saveHistory()
@@ -136,7 +151,7 @@ object Store {
         val arr = JSONArray(sp.getString("history", "[]"))
         List(arr.length()) {
             val o = arr.getJSONObject(it)
-            HistoryItem(parseAnime(o), o.optInt("source"), o.optInt("episode"), o.optString("episodeName"), o.optBoolean("finished"))
+            HistoryItem(parseAnime(o), o.optInt("source"), o.optInt("episode"), o.optString("episodeName"), o.optBoolean("finished"), o.optBoolean("dismissed"))
         }
     }.getOrDefault(emptyList())
 
@@ -149,6 +164,7 @@ object Store {
                     .put("episode", it.episode)
                     .put("episodeName", it.episodeName)
                     .put("finished", it.finished)
+                    .put("dismissed", it.dismissed)
             )
         }
         sp.edit().putString("history", arr.toString()).apply()

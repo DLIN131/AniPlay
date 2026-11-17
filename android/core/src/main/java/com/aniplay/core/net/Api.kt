@@ -1,6 +1,11 @@
 package com.aniplay.core.net
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -18,6 +23,8 @@ data class Anime(
     val remarks: String = "",
     val year: String = "",
     val score: String = "",
+    /** 季度月份（一月／四月／七月／十月），相關作品排序用 */
+    val month: String = "",
 )
 
 data class Episode(val name: String, val url: String)
@@ -38,7 +45,16 @@ data class AnimeDetail(
     val pubdate: String,
     val weekday: String,
     val sources: List<PlaySource>,
+    /** 2 日番、21 劇場版…；相關作品分類用 */
+    val typeId: Int = 0,
+    /** 網站維護的同系列作品 id（含自己），可能有已下架的 */
+    val relIds: List<Int> = emptyList(),
 )
+
+/** 同系列的其他作品，各組依年份、季度排序，包含目前這部 */
+data class Related(val tv: List<Anime>, val ova: List<Anime>, val movie: List<Anime>) {
+    val count get() = tv.size + ova.size + movie.size
+}
 
 data class Banner(val title: String, val description: String, val cover: String, val animeId: Int?)
 
@@ -140,6 +156,7 @@ object Api {
         remarks = o.str("vod_remarks").ifEmpty { (o.opt("vod_time") as? String)?.trim().orEmpty() },
         year = o.str("vod_year"),
         score = o.str("vod_score"),
+        month = o.str("vod_area"),
     )
 
     suspend fun list(q: Query, offset: Int, limit: Int = 24): Page {
@@ -179,7 +196,63 @@ object Api {
             pubdate = o.str("vod_pubdate"),
             weekday = o.str("vod_weekday"),
             sources = parseSources(o.str("vod_play_from"), o.str("vod_play_url")),
+            typeId = o.optInt("type_id"),
+            relIds = o.str("vod_rel_vod").split(',').mapNotNull { it.trim().toIntOrNull() }.filter { it > 0 },
         )
+    }
+
+    private val SPECIAL = Regex("""OVA|OAD|\bSP\b|特别篇|特別篇|番外|总集篇|總集篇""", RegexOption.IGNORE_CASE)
+    private val SERIES_CUT = Regex("""[\s：:（(]|第[一二三四五六七八九十百\d]+[季期部]|剧场版|劇場版|OVA|OAD|特别篇|特別篇""", RegexOption.IGNORE_CASE)
+    private val MONTH_ORDER = mapOf("一月" to 1, "四月" to 4, "七月" to 7, "十月" to 10)
+
+    /** 「关于我转生变成史莱姆这档事 第二季」→「关于我转生变成史莱姆这档事」 */
+    private fun seriesName(name: String): String {
+        val base = ChineseConvert.toSimplified(name).split(SERIES_CUT).first().trim()
+        return if (base.length >= 2) base else ""
+    }
+
+    /**
+     * 相關作品（同系列的各季、OVA・SP、劇場版）。兩個來源合併：
+     * 網站維護的 vod_rel_vod（不同名字的前作也找得到）＋ 用系列名搜尋（依類型分三次查，順便知道分類）。
+     */
+    suspend fun related(d: AnimeDetail): Related = coroutineScope {
+        val kind = LinkedHashMap<Int, String>()
+        val items = LinkedHashMap<Int, Anime>()
+        fun add(a: Anime, k: String) {
+            if (a.id <= 0 || a.id in items) return
+            items[a.id] = a
+            kind[a.id] = if (k == "tv" && SPECIAL.containsMatchIn(a.name)) "ova" else k
+        }
+        fun kindOf(typeId: Int, version: String) = when {
+            typeId == 21 -> "movie"
+            version == "OVA" -> "ova"
+            else -> "tv"
+        }
+        val base = seriesName(d.anime.name)
+        if (base.isNotEmpty()) {
+            fun search(q: Query) = async {
+                runCatching { list(q, 0, 60).items }.getOrDefault(emptyList())
+                    .filter { ChineseConvert.toSimplified(it.name).startsWith(base) }
+            }
+            val movies = search(Query(typeId = 21, name = base))
+            val ovas = search(Query(typeId = 2, name = base, version = "OVA"))
+            val tvs = search(Query(typeId = 2, name = base))
+            movies.await().forEach { add(it, "movie") }
+            ovas.await().forEach { add(it, "ova") }
+            tvs.await().forEach { add(it, "tv") }
+        }
+        // 目前這部一定要在
+        add(d.anime, kindOf(d.typeId, d.version))
+        val gate = Semaphore(6)
+        d.relIds.filter { it !in items }.take(40)
+            .map { id -> async { gate.withPermit { runCatching { detail(id) }.getOrNull() } } }
+            .awaitAll()
+            .filterNotNull()
+            .filter { it.typeId == 2 || it.typeId == 21 }
+            .forEach { add(it.anime, kindOf(it.typeId, it.version)) }
+        fun group(k: String) = items.values.filter { kind[it.id] == k }
+            .sortedWith(compareBy({ (it.year.toIntOrNull() ?: 9999) * 100 + (MONTH_ORDER[it.month] ?: 0) }, { it.id }))
+        Related(group("tv"), group("ova"), group("movie"))
     }
 
     /** vod_play_from = "cht$$$chs"，vod_play_url = "01$網址#02$網址$$$01$網址…" */

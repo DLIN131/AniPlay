@@ -107,10 +107,17 @@ fun TvButton(
 }
 
 @Composable
-fun AnimeCard(item: Anime, onClick: () -> Unit, modifier: Modifier = Modifier, subtitle: String? = null) {
+fun AnimeCard(
+    item: Anime,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    onLongClick: (() -> Unit)? = null,
+) {
     val shape = RoundedCornerShape(10.dp)
     Card(
         onClick = onClick,
+        onLongClick = onLongClick,
         modifier = modifier,
         shape = CardDefaults.shape(shape),
         scale = CardDefaults.scale(focusedScale = 1.07f),
@@ -204,6 +211,7 @@ fun AnimeRow(
     modifier: Modifier = Modifier,
     onMore: (() -> Unit)? = null,
     subtitles: Map<Int, String> = emptyMap(),
+    onLongClick: ((Anime) -> Unit)? = null,
 ) {
     Column(modifier) {
         Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 28.dp, bottom = 2.dp))
@@ -212,7 +220,7 @@ fun AnimeRow(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(items, key = { it.id }) { a ->
-                AnimeCard(a, onClick = { onClick(a) }, modifier = Modifier.width(140.dp), subtitle = subtitles[a.id])
+                AnimeCard(a, onClick = { onClick(a) }, modifier = Modifier.width(140.dp), subtitle = subtitles[a.id], onLongClick = onLongClick?.let { { it(a) } })
             }
             if (onMore != null) {
                 item(key = "#more") {

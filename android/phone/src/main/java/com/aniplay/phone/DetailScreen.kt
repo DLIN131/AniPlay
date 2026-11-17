@@ -56,6 +56,7 @@ import coil.compose.AsyncImage
 import com.aniplay.core.net.Anime
 import com.aniplay.core.net.AnimeDetail
 import com.aniplay.core.net.Query
+import com.aniplay.core.net.Related
 import com.aniplay.core.net.Store
 import com.aniplay.core.player.PlayerActivity
 import com.aniplay.core.ui.DetailViewModel
@@ -72,7 +73,7 @@ fun DetailScreen(anime: Anime) {
             val d = vm.detail
             val err = vm.error
             when {
-                d != null -> DetailBody(d)
+                d != null -> DetailBody(d, vm.related)
                 err != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     ErrorBox(err, onRetry = vm::load)
                 }
@@ -84,7 +85,7 @@ fun DetailScreen(anime: Anime) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DetailBody(d: AnimeDetail) {
+private fun DetailBody(d: AnimeDetail, related: Related?) {
     val context = LocalContext.current
     val nav = LocalNav.current
     val a = d.anime
@@ -254,6 +255,19 @@ private fun DetailBody(d: AnimeDetail) {
                             .padding(vertical = 10.dp, horizontal = 4.dp),
                     )
                 }
+            }
+        }
+        // 同系列的各季、OVA・SP、劇場版（除了自己以外有其他作品才顯示）
+        if (related != null && related.count > 1) {
+            SectionTitle("相關作品")
+            listOf("TV 系列" to related.tv, "OVA・SP" to related.ova, "劇場版" to related.movie).forEach { (title, list) ->
+                if (list.isEmpty()) return@forEach
+                Text(title, fontSize = 13.sp, color = Gray, modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 6.dp))
+                AnimeRow(
+                    list.map { it.copy(remarks = if (it.id == a.id) "目前這部" else listOf(it.year, it.month).filter(String::isNotEmpty).joinToString(" ")) },
+                    onClick = { if (it.id != a.id) nav.openAnime(it) },
+                )
+                Spacer(Modifier.height(8.dp))
             }
         }
         Spacer(Modifier.height(24.dp))

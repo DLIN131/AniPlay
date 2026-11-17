@@ -12,6 +12,7 @@ import com.aniplay.core.net.AnimeDetail
 import com.aniplay.core.net.Api
 import com.aniplay.core.net.Banner
 import com.aniplay.core.net.Query
+import com.aniplay.core.net.Related
 import com.aniplay.core.net.TagOptions
 import com.aniplay.core.net.WeekDay
 import com.aniplay.core.net.friendly
@@ -136,12 +137,17 @@ class DetailViewModel(private val id: Int) : ViewModel() {
         private set
     var error by mutableStateOf<String?>(null)
         private set
+    /** 相關作品；載入中或失敗都是 null（失敗就不顯示） */
+    var related by mutableStateOf<Related?>(null)
+        private set
 
     fun load() {
         error = null
         viewModelScope.launch {
             try {
-                detail = Api.detail(id)
+                val d = Api.detail(id)
+                detail = d
+                if (related == null) launch { related = runCatching { Api.related(d) }.getOrNull() }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

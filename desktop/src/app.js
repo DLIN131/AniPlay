@@ -47,6 +47,8 @@ const anime = (o) => ({
   remarks: str(o.vod_remarks) || (typeof o.vod_time === 'string' ? str(o.vod_time) : ''),
   year: str(o.vod_year),
   score: str(o.vod_score),
+  // 季度月份（一月／四月／七月／十月），相關作品排序用
+  month: str(o.vod_area),
 })
 
 // 繁體 → 簡體（逐字，對照表在 t2s.js）。網站資料都是簡體，搜尋時先轉換，打繁體也找得到
@@ -102,6 +104,10 @@ async function detail(id) {
     // 最後更新、上架時間（毫秒），用來判斷本週有沒有停更
     updatedAt: (Number(o.vod_time) || 0) * 1000,
     addedAt: (Number(o.vod_time_add) || 0) * 1000,
+    // 2 日番、21 劇場版…；相關作品分類用
+    typeId: Number(o.type_id) || 0,
+    // 網站維護的同系列作品 id（含自己），可能有已下架的
+    relIds: String(o.vod_rel_vod || '').split(',').map(Number).filter((n) => n > 0),
   }
   detailCache.set(id, d)
   return d
@@ -434,6 +440,14 @@ const store = {
     x.finished = finished
     this.set('history', h)
   },
+  /** 從「繼續觀看」移除（觀看紀錄保留）；重新播放任何一集（addHistory）就會回來 */
+  setDismissed(id) {
+    const h = this.history()
+    const x = h.find((x) => x.anime.id === id)
+    if (!x || x.dismissed) return
+    x.dismissed = true
+    this.set('history', h)
+  },
   clearHistory() {
     this.set('history', [])
     kv.keys().filter((k) => k.startsWith('pos_')).forEach((k) => kv.removeItem(k))
@@ -495,6 +509,11 @@ function card(a, sub, opts = {}) {
     ${sub ? `<div class="sub">${esc(sub)}</div>` : ''}
   </div>`)
   el.onclick = () => go(opts.href || `#/detail/${a.id}`)
+  if (opts.onRemove) {
+    const x = h('<button class="remove" title="從繼續觀看移除">✕</button>')
+    x.onclick = (ev) => { ev.stopPropagation(); opts.onRemove() }
+    el.querySelector('.cover').appendChild(x)
+  }
   return el
 }
 
@@ -688,17 +707,26 @@ async function pageHome() {
       later.forEach((x) => row.appendChild(card(x)))
       view.append(head, row)
     }
-    // 最後一集已經看完的不顯示
-    const hist = store.history().filter((x) => !x.finished).slice(0, 18)
+    // 最後一集已經看完的、自己移除的不顯示
+    const hist = store.history().filter((x) => !x.finished && !x.dismissed).slice(0, 18)
     if (hist.length) {
-      view.appendChild(h('<h2>繼續觀看</h2>'))
+      const head = h('<h2>繼續觀看</h2>')
       const row = h('<div class="row"></div>')
-      // 點了直接從上次的位置繼續播
+      // 點了直接從上次的位置繼續播；✕ 從這裡移除
       hist.forEach((x) => {
         const w = watchInfo(x)
-        row.appendChild(card({ ...x.anime, remarks: '' }, w.text, { progress: w.progress, href: `#/play/${x.anime.id}/${x.source}/${x.episode}` }))
+        const c = card({ ...x.anime, remarks: '' }, w.text, {
+          progress: w.progress,
+          href: `#/play/${x.anime.id}/${x.source}/${x.episode}`,
+          onRemove: () => {
+            store.setDismissed(x.anime.id)
+            c.remove()
+            if (!row.children.length) { head.remove(); row.remove() }
+          },
+        })
+        row.appendChild(c)
       })
-      view.appendChild(row)
+      view.append(head, row)
     }
     for (const [title, q, items] of rows) {
       if (!items.length) continue
@@ -782,6 +810,56 @@ async function pool(items, n, fn) {
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
     while (i < items.length) { const x = items[i++]; await fn(x).catch(() => {}) }
   }))
+}
+
+// ---------- 相關作品（同系列的各季、OVA・SP、劇場版） ----------
+
+const SPECIAL_RE = /OVA|OAD|\bSP\b|特别篇|特別篇|番外|总集篇|總集篇/i
+const MONTH_ORDER = { 一月: 1, 四月: 4, 七月: 7, 十月: 10 }
+
+/** 「关于我转生变成史莱姆这档事 第二季」→「关于我转生变成史莱姆这档事」 */
+function seriesName(name) {
+  const base = toSimplified(name).split(/[\s：:（(]|第[一二三四五六七八九十百\d]+[季期部]|剧场版|劇場版|OVA|OAD|特别篇|特別篇/i)[0].trim()
+  return base.length >= 2 ? base : ''
+}
+
+const relatedCache = new Map()
+/**
+ * 兩個來源合併：網站維護的 vod_rel_vod（不同名字的前作也找得到）＋ 用系列名搜尋（依類型分三次查，順便知道分類）。
+ * 回傳 { tv, ova, movie }，各組依年份、季度排序，包含目前這部。
+ */
+async function related(id, d) {
+  if (relatedCache.has(id)) return relatedCache.get(id)
+  const kind = new Map() // id → 'tv' | 'ova' | 'movie'
+  const items = new Map()
+  const add = (a, k) => {
+    if (!a || !a.id || items.has(a.id)) return
+    items.set(a.id, a)
+    kind.set(a.id, k === 'tv' && SPECIAL_RE.test(a.name) ? 'ova' : k)
+  }
+  const base = seriesName(d.anime.name)
+  if (base) {
+    const search = (q) => list({ name: base, orderby: 'pubdate', ...q }, 0, 60)
+      .then((r) => r.items.filter((a) => toSimplified(a.name).startsWith(base)))
+      .catch(() => [])
+    const [movies, ovas, tvs] = await Promise.all([search({ typeId: 21 }), search({ typeId: 2, version: 'OVA' }), search({ typeId: 2 })])
+    movies.forEach((a) => add(a, 'movie'))
+    ovas.forEach((a) => add(a, 'ova'))
+    tvs.forEach((a) => add(a, 'tv'))
+  }
+  // 目前這部一定要在
+  add({ ...d.anime }, d.typeId === 21 ? 'movie' : d.version === 'OVA' ? 'ova' : 'tv')
+  const missing = d.relIds.filter((x) => !items.has(x)).slice(0, 40)
+  await pool(missing, 6, async (rid) => {
+    const r = await detail(rid)
+    if (r.typeId !== 2 && r.typeId !== 21) return
+    add(r.anime, r.typeId === 21 ? 'movie' : r.version === 'OVA' ? 'ova' : 'tv')
+  })
+  const order = (a) => (Number(a.year) || 9999) * 100 + (MONTH_ORDER[a.month] || 0)
+  const group = (k) => [...items.values()].filter((a) => kind.get(a.id) === k).sort((a, b) => order(a) - order(b) || a.id - b.id)
+  const r = { tv: group('tv'), ova: group('ova'), movie: group('movie') }
+  relatedCache.set(id, r)
+  return r
 }
 
 async function pageWeek() {
@@ -949,6 +1027,7 @@ async function pageDetail(id) {
       </div>
     </div>
     <div class="eps-area"></div>
+    <div class="related"></div>
   </div>`)
   const tags = el.querySelector('.tags')
   d.classes.forEach((c) => {
@@ -992,6 +1071,26 @@ async function pageDetail(id) {
   }
   draw()
   view.replaceChildren(el)
+
+  // 相關作品：詳情先顯示，這裡慢慢載；載不到就不顯示
+  related(id, d).then((r) => {
+    if (route.token !== token) return
+    const groups = [['TV 系列', r.tv], ['OVA・SP', r.ova], ['劇場版', r.movie]].filter(([, list]) => list.length)
+    if (groups.reduce((n, [, list]) => n + list.length, 0) <= 1) return
+    const box = el.querySelector('.related')
+    box.appendChild(h('<h2>相關作品</h2>'))
+    for (const [title, list] of groups) {
+      box.appendChild(h(`<div class="related-title">${title}</div>`))
+      const row = h('<div class="row"></div>')
+      for (const x of list) {
+        const cur = x.id === id
+        const c = card({ ...x, remarks: '' }, cur ? '目前這部' : [x.year, x.month].filter(Boolean).join(' '))
+        if (cur) { c.classList.add('current'); c.onclick = null }
+        row.appendChild(c)
+      }
+      box.appendChild(row)
+    }
+  }).catch(() => {})
 }
 
 async function pagePlay(id, source, ep) {

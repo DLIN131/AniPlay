@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -42,6 +43,7 @@ import coil.compose.AsyncImage
 import com.aniplay.core.net.Anime
 import com.aniplay.core.net.AnimeDetail
 import com.aniplay.core.net.Query
+import com.aniplay.core.net.Related
 import com.aniplay.core.net.Store
 import com.aniplay.core.player.PlayerActivity
 import com.aniplay.core.ui.DetailViewModel
@@ -54,7 +56,7 @@ fun DetailScreen(anime: Anime) {
     val d = vm.detail
     val err = vm.error
     when {
-        d != null -> DetailBody(d)
+        d != null -> DetailBody(d, vm.related)
         err != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { ErrorBox(err, onRetry = vm::load) }
         else -> Loading(Modifier.fillMaxSize())
     }
@@ -62,7 +64,7 @@ fun DetailScreen(anime: Anime) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DetailBody(d: AnimeDetail) {
+private fun DetailBody(d: AnimeDetail, related: Related?) {
     val context = LocalContext.current
     val nav = LocalNav.current
     val a = d.anime
@@ -179,6 +181,23 @@ private fun DetailBody(d: AnimeDetail) {
                             modifier = Modifier.width(96.dp),
                         ) { Text(e.name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     }
+                }
+            }
+            // 同系列的各季、OVA・SP、劇場版（除了自己以外有其他作品才顯示）
+            if (related != null && related.count > 1) {
+                Spacer(Modifier.height(28.dp))
+                Text("相關作品", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                listOf("TV 系列" to related.tv, "OVA・SP" to related.ova, "劇場版" to related.movie).forEach { (title, list) ->
+                    if (list.isEmpty()) return@forEach
+                    Spacer(Modifier.height(12.dp))
+                    AnimeRow(
+                        title,
+                        list,
+                        onClick = { if (it.id != a.id) nav.openAnime(it) },
+                        // AnimeRow 自帶 28dp 左右邊距，這頁本身已經有 48dp，往左拉回來對齊
+                        modifier = Modifier.offset(x = (-28).dp),
+                        subtitles = list.associate { it.id to if (it.id == a.id) "目前這部" else listOf(it.year, it.month).filter(String::isNotEmpty).joinToString(" ") },
+                    )
                 }
             }
         }

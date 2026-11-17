@@ -51,6 +51,7 @@
 - `Vod/get_list`：`offset`、`limit`、`orderby`（只能 `hits|up|pubdate|hits_week|hits_month|hits_day|score`）、`type_id`（2 日番、21 劇場版、3 美番、20 真人、24 BD 副音軌、26 演唱會）、`vod_name`、`vod_class`、`vod_year`、`vod_area`（＝季度月份：一月／四月／七月／十月）、`vod_version`…
 - `Vod/get_detail?vod_id=`：`vod_play_from`＝`cht$$$chs`，`vod_play_url`＝`01$網址#02$網址$$$…`；網址可能是 m3u8 **或 mp4**。
 - `App2/weekList`（week 1＝週一）、`App2/bannerList`、`Vod/getAllTagOption`。
+- 相關作品：`get_detail` 的 `vod_rel_vod`＝網站維護的同系列 id 清單（逗號分隔、含自己，可能有已下架的 id），`type_id` 2／21 分 TV／劇場版。`get_list` 的列表結果**沒有** `type_id`／`vod_version`，但可以用它們篩選；也沒有一次查多個 id 的參數（`ids=` 無效）。`vod_version` 只有 TV番／泡面番／OVA。
 - 彈幕：`Scrolling/getScrolling`（POST multipart `play_url`，站內彈幕）、`Scrolling/getVodOutScrolling`（回傳外部彙整彈幕 XML 網址，B 站 `<d p="時間,模式,字號,顏色,…">` 格式；沒給時由 `…/playlist.m3u8` 推成 `….xml`）。
 - 回應 `code != 1` 就是錯誤；偶爾會回 HTML 的 System Error（暫時性，重試即可）。
 - 列表的 `vod_time` 是數字時間戳，時間表裡的 `vod_time` 才是「更新至03集」字串。標題等文字可能含 `&amp;` 之類的 HTML 跳脫。
@@ -86,6 +87,25 @@
 ---
 
 ## 3. 改動紀錄（新的在上面）
+
+### v1.0.17（2026-11-17）詳情頁「相關作品」、「繼續觀看」可以自己移除（三版）
+- **相關作品**：詳情頁選集下面列出同系列作品，分「TV 系列」「OVA・SP」「劇場版」三組，各組依年份、季度排，目前這部標「目前這部」；除了自己沒有其他作品就不顯示。詳情先出來，相關作品之後才載入，失敗就不顯示。
+  - 來源 1：用系列名（標題截到第一個空白／：／（／第X季／剧场版／OVA／特别篇之前，轉簡體，至少 2 字）分三次搜尋：`type_id=21`＝劇場版、`type_id=2&vod_version=OVA`＝OVA、`type_id=2`＝TV；只留名字以系列名開頭的。
+  - 來源 2：`vod_rel_vod` 裡搜尋沒找到的（例如第一季叫「我的幸福婚姻」、第二季叫「我的幸福婚约」）逐一 `get_detail`，同時 6 個、最多 40 部，只收 type 2／21。
+  - TV 類名字符合 `OVA|OAD|SP|特别篇|特別篇|番外|总集篇|總集篇` 的歸到 OVA・SP（「我的幸福婚姻 特别篇」版本欄位是 TV番）。泡麵番歸 TV。
+  - 桌面：`related(id, d)`（`relatedCache`）、`seriesName()`、`anime()` 多 `month`、`detail()` 多 `typeId`／`relIds`；`pageDetail()` 的 `.related`。Android：`Api.related()`（`coroutineScope` + `Semaphore(6)`）、`Related`、`Anime.month`、`AnimeDetail.typeId/relIds`、`DetailViewModel.related`；phone `DetailBody(d, related)` 用 `AnimeRow`，TV 用 `AnimeRow(title, …, subtitles)` 加 `offset(-28dp)` 對齊。
+- **繼續觀看移除**：觀看紀錄那筆加 `dismissed: true`，首頁只顯示 `!finished && !dismissed`；觀看紀錄頁、播放進度都保留；重新播放任何一集（`addHistory` 寫新的一筆）就會回來。
+  - 桌面：卡片滑鼠移上去左上角出現 ✕（`card(…, { onRemove })`，`stopPropagation` 不會開始播放），移除最後一張就整排拿掉。`store.setDismissed()`。
+  - 手機：長按卡片 → AlertDialog 確認（`AnimeCard`／`AnimeRow` 多 `onLongClick`，用 `combinedClickable`）；標題「繼續觀看（長按可移除）」。
+  - 電視：長按 OK（tv-material `Card(onLongClick)`）→ `RemoveContinueDialog`（預設焦點在「取消」）；標題「繼續觀看（長按 OK 可移除）」。
+  - Android `Store.HistoryItem.dismissed`、`Store.setDismissed()`、`Store.continueList()`。
+- **測試**：桌面 `offscreen` Electron（獨立 userData／data）：
+  - 26377 → TV 系列：我的幸福婚姻（2023 七月）、目前；OVA・SP：特别篇（2026 十月）。
+  - 27079 → TV 系列 7 部（第一季～第四季、Part.2、转生史莱姆日记、彩叶草之梦，依年份）；劇場版：红莲之绊篇、目前。
+  - 26928 蠟筆小新 → 劇場版 30 部以上，從 2001 排起。27222（沒有相關作品）→ 不顯示。點相關作品卡片 → 進到那部詳情（`#/detail/25381`）。截圖確認版面。
+  - 繼續觀看兩部，點一張的 ✕ → 只剩一張、沒有跳到播放頁；資料檔 `dismissed: true`；觀看紀錄頁兩部都在；移除最後一張 → 整排消失；再播 → 回來。
+  - Android `:phone:compileDebugKotlin :tv:compileDebugKotlin` 通過（沒有實機測試）。
+- **坑**：又踩到坑 #12——node heredoc 的樣板字串把 ``、`s`、`d` 吃掉（`` 變成退格字元）。有反斜線的正則一律用 Edit 工具寫。
 
 ### v1.0.16（2026-11-15）最後一集看完就不顯示在「繼續觀看」（三版）
 - **改了什麼**：看完最後一集（播到結束，或看到最後 30 秒內離開）的作品，首頁「繼續觀看」不再顯示；觀看紀錄裡保留，副標改成「已看完」。之後重新播放這部的任何一集，又會回到「繼續觀看」。只有一集的劇場版看完也一樣。

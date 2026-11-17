@@ -294,3 +294,18 @@ h2 .more:hover { color: var(--accent); }
 .backup-list { max-width: 820px; }
 .backup-row { display: flex; align-items: center; gap: 14px; background: var(--surface); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
 .backup-row .name { flex: 1; }
+
+/* 繼續觀看：滑鼠移到卡片上才出現的移除按鈕 */
+.card .remove {
+  position: absolute; top: 6px; left: 6px; width: 26px; height: 26px; padding: 0; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.75); font-size: 13px; line-height: 26px; opacity: 0; transition: opacity 0.15s;
+}
+.card:hover .remove { opacity: 1; }
+.card .remove:hover { background: #e5484d; }
+
+/* 詳情頁：相關作品 */
+.related-title { color: var(--gray); font-size: 13px; margin: 4px 0 8px; }
+.related .row { margin-bottom: 12px; }
+.card.current { cursor: default; }
+.card.current .cover { outline: 2px solid var(--accent); }
+.card.current .sub { color: var(--accent); }

@@ -2,6 +2,7 @@ package com.aniplay.phone
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,8 +74,14 @@ fun AppTheme(content: @Composable () -> Unit) {
 
 /** 直式封面卡片 */
 @Composable
-fun AnimeCard(item: Anime, onClick: () -> Unit, modifier: Modifier = Modifier, subtitle: String? = null) {
-    Column(modifier.clickable(onClick = onClick)) {
+fun AnimeCard(
+    item: Anime,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    onLongClick: (() -> Unit)? = null,
+) {
+    Column(if (onLongClick != null) modifier.combinedClickable(onLongClick = onLongClick, onClick = onClick) else modifier.clickable(onClick = onClick)) {
         Box(
             Modifier
                 .fillMaxWidth()
@@ -161,13 +168,13 @@ fun SectionTitle(title: String, onMore: (() -> Unit)? = null) {
 }
 
 @Composable
-fun AnimeRow(items: List<Anime>, onClick: (Anime) -> Unit) {
+fun AnimeRow(items: List<Anime>, onClick: (Anime) -> Unit, onLongClick: ((Anime) -> Unit)? = null) {
     LazyRow(
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         items(items, key = { it.id }) { a ->
-            AnimeCard(a, onClick = { onClick(a) }, modifier = Modifier.width(112.dp))
+            AnimeCard(a, onClick = { onClick(a) }, modifier = Modifier.width(112.dp), onLongClick = onLongClick?.let { { it(a) } })
         }
     }
 }

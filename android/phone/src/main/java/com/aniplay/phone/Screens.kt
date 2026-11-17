@@ -181,12 +181,29 @@ fun HomeScreen() {
                             AnimeRow(laterList, onClick = nav.openAnime)
                         }
                     }
-                    // 最後一集已經看完的不顯示
-                    val continueList = Store.history.filter { !it.finished }.take(12)
+                    // 最後一集已經看完的、自己移除的不顯示
+                    val continueList = Store.continueList().take(12)
                     if (continueList.isNotEmpty()) {
                         item(key = "continue") {
-                            SectionTitle("繼續觀看")
-                            AnimeRow(continueList.map { it.anime.copy(remarks = "看到第 ${it.episodeName} 集") }, onClick = nav.openAnime)
+                            var removing by remember { mutableStateOf<Anime?>(null) }
+                            SectionTitle("繼續觀看（長按可移除）")
+                            AnimeRow(
+                                continueList.map { it.anime.copy(remarks = "看到第 ${it.episodeName} 集") },
+                                onClick = nav.openAnime,
+                                onLongClick = { removing = it },
+                            )
+                            removing?.let { a ->
+                                AlertDialog(
+                                    onDismissRequest = { removing = null },
+                                    title = { Text("從繼續觀看移除？") },
+                                    text = { Text("「${a.name}」不會再出現在繼續觀看，觀看紀錄會保留。之後再播放就會回來。") },
+                                    confirmButton = {
+                                        TextButton(onClick = { Store.setDismissed(a.id); removing = null }) { Text("移除", color = Accent) }
+                                    },
+                                    dismissButton = { TextButton(onClick = { removing = null }) { Text("取消") } },
+                                    containerColor = Surface,
+                                )
+                            }
                         }
                     }
                     items(vm.rows, key = { it.title }) { row ->
